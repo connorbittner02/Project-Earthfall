@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "ProceduralMeshComponent.h"
 #include "EarthfallPlanet.generated.h"
 
 UCLASS()
@@ -25,8 +26,17 @@ public:
 
 private:
     UPROPERTY(VisibleAnywhere)
-    TObjectPtr<UStaticMeshComponent> PlanetMesh;
+    TObjectPtr<class UProceduralMeshComponent> PlanetMesh;
 
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<USceneComponent> Root;
+    TArray<FVector> BaseVertices;
+    TArray<FVector> DeformedVertices;
+    TArray<int32> Triangles;
+    TArray<FVector> Normals;
+    TArray<FVector2D> UVs;
+    TArray<FLinearColor> VertexColors;
+    TArray<FProcMeshTangent> Tangents;
+
+    void BuildPlanetMesh();
 };

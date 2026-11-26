@@ -4,12 +4,12 @@ An Unreal Engine 5.8 prototype for an Earth-scale destruction sandbox.
 
 ## Current prototype
 
-- Procedural Unreal sphere as the initial planet placeholder
+- Procedurally generated spherical mesh with vertex displacement at impact sites
 - Orbit camera with mouse look and wheel zoom
 - Click-to-strike interaction with a flash and expanding shockwave
-- C++ impact API ready for later terrain and simulation systems
+- Per impact shockwave feedback and an exposed-rock color at impact sites
 
-The current sphere does not yet deform. The design brief describes a much larger target; this repository starts with a compilable gameplay foundation.
+The planet currently uses a moderate resolution CPU mesh for this first deformation prototype. It is not yet the GPU SDF terrain system described in the design brief.
 
 ## Run
 

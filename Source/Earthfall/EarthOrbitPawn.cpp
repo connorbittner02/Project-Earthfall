@@ -60,7 +60,7 @@ void AEarthOrbitPawn::OrbitPitchInput(float Value)
 
 void AEarthOrbitPawn::ZoomInput(float Value)
 {
-    Distance = FMath::Clamp(Distance - Value * 25.0f, 180.0f, 1200.0f);
+    Distance = FMath::Clamp(Distance - Value * 25.0f, 135.0f, 1200.0f);
 }
 
 void AEarthOrbitPawn::FireImpact()

@@ -19,7 +19,7 @@ void AEarthfallGameMode::BeginPlay()
 
     FActorSpawnParameters Params;
     Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-    const FTransform PlanetTransform(FRotator::ZeroRotator, FVector::ZeroVector, FVector(10.0f));
+    const FTransform PlanetTransform(FRotator::ZeroRotator, FVector::ZeroVector, FVector::OneVector);
     GetWorld()->SpawnActor<AEarthfallPlanet>(AEarthfallPlanet::StaticClass(), PlanetTransform, Params);
 
     const FVector LightDirection(-1.0f, -0.35f, -0.7f);

@@ -31,6 +31,6 @@ private:
 
     float Yaw = 0.0f;
     float Pitch = -10.0f;
-    float Distance = 360.0f;
+    float Distance = 340.0f;
     FVector PendingOrbit = FVector::ZeroVector;
 };
