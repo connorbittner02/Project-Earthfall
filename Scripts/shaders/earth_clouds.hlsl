@@ -19,13 +19,24 @@ float4 Main(float3 LocalPos, float3 Mask, float3 Ash, float3 Sun, float Time,
 
     float cleared = saturate(Mask.b);
     float density = CloudField(ns, Time, Layer, 6);
+    // High-frequency wispy erosion: thin cloud is eaten away first, so decks
+    // fray into filaments instead of ending on a solid white edge.
+    float3 wp = ns * 46.0 + float3(Time * 0.012, 0.0, Time * 0.007);
+    float wisps = Fbm(wp, 3) * 0.7 + Fbm(wp * 3.1 + 5.0, 2) * 0.3;
+    density = saturate(density - smoothstep(0.30, 0.62, wisps) * (1.0 - density * 0.55) * 0.60);
     density = saturate(density + ring * 0.28) * (1.0 - cleared);
 
     // Volumetric-style relief: march one step toward the sun through the same
     // field, so sunward edges glow and lee sides fall into shadow.
     float NdL = dot(n, Sun);
     float3 sunTangent = Sun - n * NdL;
-    float towardSun = CloudField(normalize(ns + sunTangent * 0.020), Time, Layer, 4) * (1.0 - cleared);
+    // The thin high deck (Look.y < 1) cannot shadow itself visibly, so it skips
+    // the second weather lookup and shades from its own density.
+    float towardSun = density;
+    if (Look.y >= 1.0)
+    {
+        towardSun = CloudField(normalize(ns + sunTangent * 0.020), Time, Layer, 4) * (1.0 - cleared);
+    }
     float shade = exp(-towardSun * Look.y);
 
     float day = smoothstep(-0.12, 0.20, NdL);
@@ -34,7 +45,9 @@ float4 Main(float3 LocalPos, float3 Mask, float3 Ash, float3 Sun, float Time,
                               + float3(0.10, 0.16, 0.28) * 0.55 * day
                               + float3(0.004, 0.006, 0.012));
     cloudCol *= lerp(0.80, 1.0, density);
-    float cloudAlpha = saturate(density * 1.15);
+    // Semi-transparent vapour: feathered edges ramp to 0.45, and even the
+    // thickest cores stop at 0.78 so ocean and land read through.
+    float cloudAlpha = 0.45 * smoothstep(0.0, 0.50, density) + 0.33 * smoothstep(0.45, 1.0, density);
 
     // Soot rides above the weather and is lit the same way; fallout tints it.
     // A 0.7 power lifts thin plumes so 1x fallout reads clearly from orbit.

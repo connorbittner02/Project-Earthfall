@@ -24,7 +24,7 @@ float3 Main(float3 CamVec, Texture2D SkyTex, SamplerState SkyTexSampler, float4 
     for (int tier = 0; tier < 3; tier++)
     {
         float scale = tier == 0 ? 95.0 : (tier == 1 ? 260.0 : 620.0);
-        float chance = tier == 0 ? 0.06 : (tier == 1 ? 0.13 : 0.24);
+        float chance = tier == 0 ? 0.045 : (tier == 1 ? 0.10 : 0.19);
         float lowLevel = tier == 0 ? 2.0 : (tier == 1 ? 0.8 : 0.30);
         float highLevel = tier == 0 ? 4.0 : (tier == 1 ? 1.5 : 0.60);
         float3 g = d * scale;

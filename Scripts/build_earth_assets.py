@@ -314,7 +314,7 @@ def build_space(sky):
     inputs = [
         ("CamVec", node(material, unreal.MaterialExpressionCameraVectorWS, -900, -100), ""),
         ("SkyTex", texture_object(material, "SpaceSkybox", sky, 0), ""),
-        ("Tuning", vector_parameter(material, "Tuning", (2.0, 1.0, 0.085, 0.0), 100), "RGBA"),
+        ("Tuning", vector_parameter(material, "Tuning", (2.3, 0.62, 0.075, 0.0), 100), "RGBA"),
     ]
     shading = custom(material, "space_sky.hlsl", inputs, unreal.CustomMaterialOutputType.CMOT_FLOAT3)
     output(shading, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)

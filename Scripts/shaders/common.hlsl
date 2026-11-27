@@ -125,7 +125,12 @@ float CloudField(float3 n, float time, float4 layer, int octaves)
     float3 p = float3(n.xy * 4.3, n.z * 4.3 * layer.z) + warp * 1.15 + layer.x * 1.7;
     float f = Fbm(p, octaves);
     // Fine erosion breaks solid decks into cells and streets.
-    f += (Fbm(p * 5.3 + 3.1, 3) - 0.44) * 0.11;
+    // Shadow and self-shadow lookups ask for 4 octaves and are blurred anyway,
+    // so only the visible deck pays for the erosion.
+    if (octaves > 4)
+    {
+        f += (Fbm(p * 5.3 + 3.1, 3) - 0.44) * 0.11;
+    }
 
     // Climate bands: wet ITCZ, dry subtropical highs, stormy mid-latitudes.
     float sl = abs(n.z);

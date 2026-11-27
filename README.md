@@ -10,7 +10,7 @@ An Unreal Engine 5.8 C++ prototype for an Earth-scale destruction sandbox. Self-
 - `M_EarthPhotoreal` is **unlit**: sun, soft terminator, GGX ocean sunglint (roughness ~0.30), cloud shadows, city lights, scorch, magma and atmospheric in-scatter are all computed in one shader from a UTC-driven sun vector. The look therefore does not depend on `ASkyAtmosphere`, sky light, exposure metering or shadow cascades. `ASkyAtmosphere` is deliberately not used: at its default 6,360 km scale it buries a 100-unit globe in grey fog.
 - `M_EarthAtmosphere` is an additive shell whose glow is derived analytically from the view ray's closest approach to the planet, giving a crisp blue limb that turns orange through the twilight band and browns as the atmosphere is choked with soot.
 - `M_SpaceSky` shows ESO's visible-light Milky Way panorama and overlays three brightness tiers of clustered procedural point stars that stay sharp at 4K. `M_EarthSun` is an HDR disc with limb darkening; `M_SunCorona` adds a halo, diffraction spikes and an anamorphic streak. `M_EarthMoon` is a fully procedural cratered Moon on a slow inclined orbit.
-- Fixed exposure with the physical-camera term disabled, TSR anti-aliasing, 45 degree field of view.
+- Fixed exposure with the physical-camera term disabled, TSR anti-aliasing at 100% screen percentage (native resolution), 45 degree field of view.
 
 **Weather, ash and shockwaves**
 
@@ -63,8 +63,12 @@ Then open `Earthfall.uproject` and press Play, or run the uncooked game directly
 `-EarthfallCapture` spawns `AEarthfallCaptureDirector`, which waits for shaders and textures to finish compiling, flies a fixed shot list, fires real strikes through the same launch path the player uses, writes numbered PNGs to `Saved/Screenshots/Capture/`, logs the measured frame rate and telemetry, and quits. `-EarthfallSunLon` / `-EarthfallSunLat` pin the subsolar point so captures are repeatable.
 
 ```powershell
-& 'C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe' "$PWD\Earthfall.uproject" -game -windowed -ResX=1920 -ResY=1080 -RenderOffscreen -EarthfallCapture -EarthfallSunLon=-60 -EarthfallSunLat=10 -unattended -nosplash -NoSound -log=EarthfallCapture.log
+& 'C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe' "$PWD\Earthfall.uproject" -game -windowed -ForceRes -enablehighdpi -NoVSync -WinX=0 -WinY=0 -ResX=3840 -ResY=2160 -EarthfallCapture -EarthfallSunLon=-60 -EarthfallSunLat=10 -unattended -nosplash -NoSound -log=EarthfallCapture.log
 ```
+
+Use a real window for anything you intend to measure. `-RenderOffscreen` is handy for a quick headless smoke test, but it ignores `-ResX`/`-ResY` and renders at roughly 888x500, so its frame rate and sharpness say nothing about 4K. `-fullscreen` follows the primary display's mode and is vsync-capped.
+
+Measured on an RTX 4080 at native 3840x2160, TSR at 100% screen percentage, vsync off, across the whole scripted run including every strike: about 81 fps average. The cloud shells are the dominant cost. `Media/Capture/` holds the 888x500 smoke-test set and `Media/Capture4K/` holds native 4K frames.
 
 ## Asset pipeline
 

@@ -98,7 +98,8 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
 
     // --- Night side: city lights only, dead under scorch and EMP.
     float night = 1.0 - smoothstep(-0.20, 0.04, NdLs);
-    float3 emissive = NightTex * night * (1.0 - blackout) * Tuning.y * (1.0 - 0.7 * soot);
+    // Sodium-vapour gold, as city webs look from the ISS.
+    float3 emissive = NightTex * float3(1.0, 0.78, 0.45) * 1.30 * night * (1.0 - blackout) * Tuning.y * (1.0 - 0.7 * soot);
 
     // --- Magma: ridged-noise veins that narrow and dim as the crater cools.
     // Warp the lookup so the veins meander instead of following the noise lattice.
