@@ -1,15 +1,23 @@
 #include "EarthfallPopulationSubsystem.h"
+#include "EarthfallTypes.h"
+#include "Stats/Stats.h"
 
 namespace
 {
 constexpr double EarthRadiusKm = 6371.0;
 
-FVector DirectionFromLatLon(double LatitudeDegrees, double LongitudeDegrees)
+FVector DirectionFromRadians(double Latitude, double Longitude)
 {
-	const double Latitude = FMath::DegreesToRadians(LatitudeDegrees);
-	const double Longitude = FMath::DegreesToRadians(LongitudeDegrees);
 	return FVector(FMath::Cos(Latitude) * FMath::Cos(Longitude),
-		FMath::Cos(Latitude) * FMath::Sin(Longitude), FMath::Sin(Latitude));
+		-FMath::Cos(Latitude) * FMath::Sin(Longitude), FMath::Sin(Latitude));
+}
+
+FString FormatPeople(double Count)
+{
+	if (Count >= 1.e9) return FString::Printf(TEXT("%.2fB"), Count / 1.e9);
+	if (Count >= 1.e6) return FString::Printf(TEXT("%.2fM"), Count / 1.e6);
+	if (Count >= 1.e3) return FString::Printf(TEXT("%.1fK"), Count / 1.e3);
+	return FString::Printf(TEXT("%.0f"), Count);
 }
 }
 
@@ -24,7 +32,227 @@ void UEarthfallPopulationSubsystem::Deinitialize()
 {
 	Cells.Reset();
 	Cities.Reset();
+	NewsQueue.Reset();
+	Plumes.Reset();
 	Super::Deinitialize();
+}
+
+TStatId UEarthfallPopulationSubsystem::GetStatId() const
+{
+	RETURN_QUICK_DECLARE_CYCLE_STAT(UEarthfallPopulationSubsystem, STATGROUP_Tickables);
+}
+
+void UEarthfallPopulationSubsystem::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+	const UWorld* World = GetWorld();
+	// Editor preview worlds share the subsystem lifetime but must not age the sim.
+	if (!World || !World->IsGameWorld() || DeltaTime <= 0.0f) return;
+	WindTime += DeltaTime;
+	AdvanceDispatches(DeltaTime);
+	AdvancePlumes(DeltaTime);
+	RecoverEnvironment(DeltaTime);
+}
+
+float UEarthfallPopulationSubsystem::DispatchLifetimeForPriority(int32 Priority)
+{
+	// Larger events stay on air longer, but nothing is permanent.
+	return DispatchBaseLifetimeSeconds + FMath::Clamp(Priority, 0, 10) * DispatchLifetimePerPriority;
+}
+
+void UEarthfallPopulationSubsystem::AdvanceDispatches(float DeltaTime)
+{
+	if (NewsQueue.IsEmpty()) return;
+
+	uint64 NewestSequence = 0;
+	for (const FEarthfallNewsEvent& Event : NewsQueue)
+	{
+		NewestSequence = FMath::Max(NewestSequence, Event.Sequence);
+	}
+
+	for (FEarthfallNewsEvent& Event : NewsQueue) Event.TimeToLive -= DeltaTime;
+
+	// Retire stale dispatches, but always keep the newest one so the ticker
+	// never goes blank mid-session.
+	const int32 Retired = NewsQueue.RemoveAll([NewestSequence](const FEarthfallNewsEvent& Event)
+	{
+		return Event.TimeToLive <= 0.0f && Event.Sequence != NewestSequence;
+	});
+	if (Retired > 0) DispatchCursor = 0;
+
+	// Rotate the headline. Without this, one priority-10 dispatch holds slot 0
+	// forever and every later strike is reported to nobody.
+	DispatchRotationTimer += DeltaTime;
+	if (DispatchRotationTimer >= DispatchRotationSeconds && NewsQueue.Num() > 1)
+	{
+		DispatchRotationTimer = 0.0f;
+		DispatchCursor = (DispatchCursor + 1) % NewsQueue.Num();
+	}
+	if (!NewsQueue.IsValidIndex(DispatchCursor)) DispatchCursor = 0;
+	Telemetry.LatestDispatch = NewsQueue[DispatchCursor].Text;
+}
+
+void UEarthfallPopulationSubsystem::AdvancePlumes(float DeltaTime)
+{
+	float TotalSoot = 0.0f;
+	float TotalFallout = 0.0f;
+	const float SootKeep = FMath::Exp(-DeltaTime / SootDecaySeconds);
+	const float FalloutKeep = FMath::Exp(-DeltaTime / FalloutDecaySeconds);
+	for (FEarthfallAshPlume& Plume : Plumes)
+	{
+		// Same wind field the GPU uses to move the visible plume.
+		const FVector2D Wind = EarthfallWind::Velocity(Plume.Latitude, Plume.Longitude, WindTime);
+		Plume.Longitude += Wind.X / FMath::Max(FMath::Cos(Plume.Latitude), 0.08) * DeltaTime;
+		Plume.Latitude = FMath::Clamp(Plume.Latitude + Wind.Y * DeltaTime, -1.50, 1.50);
+		if (Plume.Longitude > PI) Plume.Longitude -= 2.0 * PI;
+		if (Plume.Longitude < -PI) Plume.Longitude += 2.0 * PI;
+		Plume.RadiusRadians = FMath::Min(Plume.RadiusRadians + PlumeSpreadRadiansPerSecond * DeltaTime, 0.95f);
+		Plume.Soot *= SootKeep;
+		Plume.Fallout *= FalloutKeep;
+		TotalSoot += Plume.Soot;
+		TotalFallout += Plume.Fallout;
+	}
+	Plumes.RemoveAll([](const FEarthfallAshPlume& Plume) { return Plume.Soot < 0.02f && Plume.Fallout < 0.01f; });
+
+	Telemetry.SootTeragrams = TotalSoot;
+	Telemetry.FalloutIndex = 100.0f * (1.0f - FMath::Exp(-TotalFallout / 8.0f));
+	Telemetry.SunlightPercent = 100.0f * FMath::Exp(-TotalSoot / 600.0f);
+
+	FalloutDoseTimer += DeltaTime;
+	if (FalloutDoseTimer >= FalloutDoseInterval)
+	{
+		ApplyFalloutDose(FalloutDoseTimer);
+		FalloutDoseTimer = 0.0f;
+	}
+
+	FalloutNewsTimer += DeltaTime;
+	if (FalloutNewsTimer >= 12.0f && FalloutCasualtiesSinceNews >= 250000.0)
+	{
+		const FEarthfallAshPlume* Worst = nullptr;
+		for (const FEarthfallAshPlume& Plume : Plumes)
+		{
+			if (!Worst || Plume.Fallout > Worst->Fallout) Worst = &Plume;
+		}
+		if (Worst)
+		{
+			bool bNearCity = false;
+			const FString Region = DescribeImpactRegion(DirectionFromRadians(Worst->Latitude, Worst->Longitude), bNearCity);
+			EnqueueNews(FString::Printf(TEXT("[FALLOUT · %s] Radioactive plume drifting downwind  //  +%s fallout casualties  //  %.0f%% sunlight reaching surface"),
+				*Region, *FormatPeople(FalloutCasualtiesSinceNews), Telemetry.SunlightPercent), 4);
+		}
+		FalloutCasualtiesSinceNews = 0.0;
+		FalloutNewsTimer = 0.0f;
+	}
+}
+
+void UEarthfallPopulationSubsystem::ApplyFalloutDose(float DeltaTime)
+{
+	if (Cells.IsEmpty()) return;
+	double NewCasualties = 0.0;
+	for (const FEarthfallAshPlume& Plume : Plumes)
+	{
+		if (Plume.Fallout < 0.02f) continue;
+		// A plume thins as it spreads, so dose falls with the square of its radius.
+		const float Intensity = FMath::Min(Plume.Fallout * FMath::Square(0.25f / FMath::Max(Plume.RadiusRadians, 0.1f)), 6.0f);
+		const double PeakFraction = 1.0 - FMath::Exp(-0.0035 * Intensity * DeltaTime);
+		if (PeakFraction < 1.e-6) continue;
+
+		const FVector Center = DirectionFromRadians(Plume.Latitude, Plume.Longitude);
+		const float CosRadius = FMath::Cos(Plume.RadiusRadians);
+		const int32 RowMin = FMath::Clamp(FMath::FloorToInt((0.5 - (Plume.Latitude + Plume.RadiusRadians) / PI) * GridHeight), 0, GridHeight - 1);
+		const int32 RowMax = FMath::Clamp(FMath::CeilToInt((0.5 - (Plume.Latitude - Plume.RadiusRadians) / PI) * GridHeight), 0, GridHeight - 1);
+		for (int32 Y = RowMin; Y <= RowMax; ++Y)
+		{
+			const double Latitude = PI * (0.5 - (static_cast<double>(Y) + 0.5) / GridHeight);
+			for (int32 X = 0; X < GridWidth; ++X)
+			{
+				FEarthfallPopulationCell& Cell = Cells[Y * GridWidth + X];
+				if (Cell.LivingPopulation <= 0.0) continue;
+				const double Longitude = ((static_cast<double>(X) + 0.5) / GridWidth - 0.5) * 2.0 * PI;
+				const float Dot = FVector::DotProduct(DirectionFromRadians(Latitude, Longitude), Center);
+				if (Dot < CosRadius) continue;
+				const float Profile = 1.0f - FMath::SmoothStep(0.0f, 1.0f, FMath::Acos(FMath::Clamp(Dot, -1.0f, 1.0f)) / Plume.RadiusRadians);
+				const double Before = Cell.LivingPopulation;
+				const double Casualties = Before * PeakFraction * Profile;
+				Cell.DisplacedPopulation = FMath::Max(0.0, Cell.DisplacedPopulation - Casualties * (Cell.DisplacedPopulation / Before));
+				Cell.LivingPopulation = Before - Casualties;
+				// Survivors flee the plume three times faster than it kills them.
+				const double NotYetDisplaced = FMath::Max(0.0, Cell.LivingPopulation - Cell.DisplacedPopulation);
+				Cell.DisplacedPopulation += NotYetDisplaced * FMath::Min(PeakFraction * Profile * 3.0, 1.0);
+				NewCasualties += Casualties;
+			}
+		}
+	}
+	if (NewCasualties > 0.0)
+	{
+		Telemetry.TotalCasualties += NewCasualties;
+		Telemetry.FalloutCasualties += NewCasualties;
+		FalloutCasualtiesSinceNews += NewCasualties;
+		RefreshPopulationTotals();
+	}
+}
+
+void UEarthfallPopulationSubsystem::RecoverEnvironment(float DeltaTime)
+{
+	// Soot shades the surface: the climate chases a colder equilibrium while it
+	// hangs in the air and drifts back to baseline as it rains out.
+	const float SootCoolingC = -22.0f * (1.0f - FMath::Exp(-Telemetry.SootTeragrams / 700.0f));
+	const float TargetTemperature = BaselineTemperatureC + SootCoolingC;
+	Telemetry.MeanTemperatureC += (TargetTemperature - Telemetry.MeanTemperatureC) * (1.0f - FMath::Exp(-DeltaTime / 20.0f));
+
+	const float TargetAtmosphere = BaselineAtmosphereHealth * FMath::Exp(-Telemetry.SootTeragrams / 900.0f)
+		* (1.0f - 0.25f * Telemetry.FalloutIndex / 100.0f);
+	if (Telemetry.AtmosphereHealth > TargetAtmosphere)
+	{
+		Telemetry.AtmosphereHealth += (TargetAtmosphere - Telemetry.AtmosphereHealth) * (1.0f - FMath::Exp(-DeltaTime / 8.0f));
+	}
+	else
+	{
+		Telemetry.AtmosphereHealth = FMath::FInterpConstantTo(Telemetry.AtmosphereHealth,
+			TargetAtmosphere, DeltaTime, AtmosphereRecoveryPerSecond);
+	}
+
+	if (Cells.IsEmpty()) return;
+
+	// Amortized sweep: cooling all 131072 cells every frame would be wasteful, so
+	// each tick advances one slice and the per-visit step is scaled by how many
+	// ticks it takes to come back around. Average cooling rate is unchanged.
+	const int32 SliceSize = FMath::Min(HazardCellsPerTick, Cells.Num());
+	const float SweepScale = static_cast<float>(Cells.Num()) / static_cast<float>(FMath::Max(1, SliceSize));
+	const float CoolStep = HazardCoolPerSecond * DeltaTime * SweepScale;
+	for (int32 Step = 0; Step < SliceSize; ++Step)
+	{
+		FEarthfallPopulationCell& Cell = Cells[HazardSweepCursor];
+		// Cryo strikes drive HazardHeat negative, so relax toward zero from both sides.
+		Cell.HazardHeat = FMath::FInterpConstantTo(Cell.HazardHeat, 0.0f, 1.0f, CoolStep);
+		HazardSweepCursor = (HazardSweepCursor + 1) % Cells.Num();
+	}
+}
+
+void UEarthfallPopulationSubsystem::RefreshPopulationTotals()
+{
+	double LivingTotal = 0.0;
+	double DisplacedTotal = 0.0;
+	GridPowerSum = 0.0f;
+	for (const FEarthfallPopulationCell& Cell : Cells)
+	{
+		LivingTotal += Cell.LivingPopulation;
+		// A cell can never report more displaced survivors than it has living ones.
+		DisplacedTotal += FMath::Min(Cell.DisplacedPopulation, Cell.LivingPopulation);
+		GridPowerSum += Cell.PowerGridHealth;
+	}
+	Telemetry.LivingPopulation = FMath::Max(0.0, LivingTotal);
+	Telemetry.DisplacedPopulation = FMath::Max(0.0, DisplacedTotal);
+	Telemetry.GridBlackoutPercent = Cells.IsEmpty() ? 0.0f : (1.0f - GridPowerSum / Cells.Num()) * 100.0f;
+}
+
+FString UEarthfallPopulationSubsystem::GetDispatchTicker() const
+{
+	if (NewsQueue.IsEmpty()) return Telemetry.LatestDispatch;
+	TArray<FString> Parts;
+	Parts.Reserve(NewsQueue.Num());
+	for (const FEarthfallNewsEvent& Event : NewsQueue) Parts.Add(Event.Text);
+	return FString::Join(Parts, TEXT("     ///     "));
 }
 
 void UEarthfallPopulationSubsystem::BuildCityAnchors()
@@ -34,7 +262,7 @@ void UEarthfallPopulationSubsystem::BuildCityAnchors()
 	{
 		FCityAnchor& City = Cities.AddDefaulted_GetRef();
 		City.Name = Name;
-		City.Direction = DirectionFromLatLon(Lat, Lon);
+		City.Direction = EarthfallSolar::DirectionFromLatLon(Lat, Lon);
 		City.Weight = Weight;
 	};
 
@@ -104,8 +332,7 @@ void UEarthfallPopulationSubsystem::SeedPopulation()
 		{
 			const double U = (static_cast<double>(X) + 0.5) / GridWidth;
 			const double Longitude = (U - 0.5) * 2.0 * PI;
-			const FVector Direction(FMath::Cos(Latitude) * FMath::Cos(Longitude),
-				FMath::Cos(Latitude) * FMath::Sin(Longitude), FMath::Sin(Latitude));
+			const FVector Direction = DirectionFromRadians(Latitude, Longitude);
 
 			const double BroadNoise = FMath::PerlinNoise2D(FVector2D(Longitude * 0.65, Latitude * 0.65));
 			const double LandWeight = FMath::SmoothStep(-0.28, 0.30, BroadNoise);
@@ -152,7 +379,7 @@ void UEarthfallPopulationSubsystem::SeedPopulation()
 int32 UEarthfallPopulationSubsystem::GetCellIndex(const FVector& LocalDirection) const
 {
 	const FVector Direction = LocalDirection.GetSafeNormal();
-	const double Longitude = FMath::Atan2(Direction.Y, Direction.X);
+	const double Longitude = FMath::Atan2(-Direction.Y, Direction.X);
 	const double Latitude = FMath::Asin(FMath::Clamp(Direction.Z, -1.0, 1.0));
 	const double U = (Longitude + PI) / (2.0 * PI);
 	const double V = (PI * 0.5 - Latitude) / PI;
@@ -179,26 +406,46 @@ FString UEarthfallPopulationSubsystem::DescribeImpactRegion(const FVector& Local
 	bNearCity = NearestCity && NearestDot > FMath::Cos(FMath::DegreesToRadians(9.0));
 	if (bNearCity) return NearestCity->Name.ToUpper();
 
-	const double Longitude = FMath::RadiansToDegrees(FMath::Atan2(Direction.Y, Direction.X));
-	const double Latitude = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(Direction.Z, -1.0, 1.0)));
-	if (FMath::Abs(Latitude) > 67.0) return TEXT("POLAR OCEAN");
-	if (FMath::Abs(Longitude) > 125.0) return TEXT("PACIFIC OCEAN");
-	if (Longitude > -25.0 && Longitude < 65.0 && Latitude < 35.0 && Latitude > -40.0) return TEXT("NORTH AFRICA");
-	if (Longitude > 65.0 && Longitude < 150.0) return TEXT("EAST ASIA");
-	if (Longitude < -25.0 && Longitude > -125.0) return TEXT("THE AMERICAS");
-	return TEXT("OPEN OCEAN");
+	const double Lon = FMath::RadiansToDegrees(FMath::Atan2(-Direction.Y, Direction.X));
+	const double Lat = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(Direction.Z, -1.0, 1.0)));
+	auto In = [Lat, Lon](double LonMin, double LonMax, double LatMin, double LatMax)
+	{
+		return Lon >= LonMin && Lon <= LonMax && Lat >= LatMin && Lat <= LatMax;
+	};
+	if (Lat > 72.0) return TEXT("THE ARCTIC");
+	if (Lat < -62.0) return TEXT("ANTARCTICA");
+	if (In(-170.0, -52.0, 14.0, 72.0)) return TEXT("NORTH AMERICA");
+	if (In(-82.0, -34.0, -56.0, 14.0)) return TEXT("SOUTH AMERICA");
+	if (In(34.0, 63.0, 12.0, 42.0)) return TEXT("THE MIDDLE EAST");
+	if (In(-11.0, 40.0, 36.0, 71.0)) return TEXT("EUROPE");
+	if (In(-18.0, 52.0, -35.0, 37.0)) return TEXT("AFRICA");
+	if (In(40.0, 180.0, 50.0, 72.0)) return TEXT("SIBERIA");
+	if (In(60.0, 97.0, 5.0, 37.0)) return TEXT("SOUTH ASIA");
+	if (In(97.0, 146.0, 18.0, 54.0)) return TEXT("EAST ASIA");
+	if (In(92.0, 141.0, -11.0, 18.0)) return TEXT("SOUTHEAST ASIA");
+	if (In(112.0, 155.0, -44.0, -10.0)) return TEXT("AUSTRALIA");
+	if (Lat < -45.0) return TEXT("THE SOUTHERN OCEAN");
+	if (Lon > 146.0 || Lon < -82.0) return TEXT("THE PACIFIC");
+	if (Lon > -70.0 && Lon < 20.0) return TEXT("THE ATLANTIC");
+	return TEXT("THE INDIAN OCEAN");
 }
 
-void UEarthfallPopulationSubsystem::ApplyStrike(const FVector& LocalDirection, float RadiusRadians, float Energy, int32 WeaponIndex)
+void UEarthfallPopulationSubsystem::ApplyStrike(const FVector& LocalDirection, float RadiusRadians, float Energy,
+	int32 WeaponIndex, float YieldMultiplier, float FalloutMultiplier)
 {
 	if (Cells.IsEmpty()) SeedPopulation();
 	const FVector Center = LocalDirection.GetSafeNormal();
-	const float StrikeAngle = FMath::Clamp(RadiusRadians, 0.002f, PI * 0.45f);
+	const float StrikeAngle = FMath::Clamp(RadiusRadians, 0.002f, PI * 0.85f);
 	static const float PeakCasualtyFractions[] = {0.38f, 0.24f, 0.62f, 0.85f, 0.42f, 0.76f};
 	static const float PeakDisplacementFractions[] = {0.56f, 0.64f, 0.82f, 0.38f, 0.48f, 0.88f};
-	const int32 SafeWeapon = FMath::Clamp(WeaponIndex, 0, 5);
-	const float EnergyScale = FMath::Clamp(Energy / 180.0f, 0.2f, 1.15f);
-	const float FalloutAngle = StrikeAngle * (SafeWeapon == 5 ? 3.5f : (SafeWeapon == 2 ? 2.1f : 1.7f));
+	const int32 SafeWeapon = FMath::Clamp(WeaponIndex, 0, EarthfallWeapons::Count - 1);
+	const FEarthfallWeaponSpec& Spec = EarthfallWeapons::Get(SafeWeapon);
+	const bool bNuclear = SafeWeapon == EarthfallWeapons::Nuclear;
+	// Lethality compounds with energy: survival is (1 - peak)^scale, so a 100x
+	// yield sterilises the blast zone instead of saturating at a clamped 1.15.
+	const float EnergyScale = FMath::Max(Energy / 180.0f, 0.05f);
+	const float YieldRoot = FMath::Sqrt(FMath::Max(YieldMultiplier, 0.01f));
+	const float FalloutAngle = FMath::Min(StrikeAngle * (bNuclear ? 3.5f : (SafeWeapon == 2 ? 2.1f : 1.7f)), PI);
 	double NewCasualties = 0.0;
 	double NewDisplaced = 0.0;
 
@@ -210,15 +457,14 @@ void UEarthfallPopulationSubsystem::ApplyStrike(const FVector& LocalDirection, f
 			FEarthfallPopulationCell& Cell = Cells[Y * GridWidth + X];
 			if (Cell.LivingPopulation <= 0.0 && Cell.DisplacedPopulation <= 0.0) continue;
 			const double Longitude = ((static_cast<double>(X) + 0.5) / GridWidth - 0.5) * 2.0 * PI;
-			const FVector Direction(FMath::Cos(Latitude) * FMath::Cos(Longitude),
-				FMath::Cos(Latitude) * FMath::Sin(Longitude), FMath::Sin(Latitude));
-			const float Dot = FVector::DotProduct(Direction, Center);
+			const float Dot = FVector::DotProduct(DirectionFromRadians(Latitude, Longitude), Center);
 			if (Dot < FMath::Cos(FalloutAngle)) continue;
 			const float AngularDistance = FMath::Acos(FMath::Clamp(Dot, -1.0f, 1.0f));
 			const float CoreT = FMath::Clamp(AngularDistance / StrikeAngle, 0.0f, 1.0f);
 			const float CoreProfile = 1.0f - FMath::SmoothStep(0.0f, 1.0f, CoreT);
 			const double PopulationBeforeImpact = Cell.LivingPopulation;
-			const double Casualties = PopulationBeforeImpact * PeakCasualtyFractions[SafeWeapon] * EnergyScale * CoreProfile;
+			const double KillFraction = 1.0 - FMath::Pow(1.0 - PeakCasualtyFractions[SafeWeapon] * CoreProfile, EnergyScale);
+			const double Casualties = PopulationBeforeImpact * KillFraction;
 			if (PopulationBeforeImpact > 0.0)
 			{
 				Cell.DisplacedPopulation = FMath::Max(0.0, Cell.DisplacedPopulation
@@ -230,53 +476,62 @@ void UEarthfallPopulationSubsystem::ApplyStrike(const FVector& LocalDirection, f
 			const float FalloutT = FMath::Clamp(AngularDistance / FalloutAngle, 0.0f, 1.0f);
 			const float FalloutProfile = 1.0f - FMath::SmoothStep(0.0f, 1.0f, FalloutT);
 			const double NotYetDisplaced = FMath::Max(0.0, Cell.LivingPopulation - Cell.DisplacedPopulation);
-			const double Displacement = NotYetDisplaced * PeakDisplacementFractions[SafeWeapon]
-				* EnergyScale * FalloutProfile;
+			const double DisplaceFraction = 1.0 - FMath::Pow(1.0 - PeakDisplacementFractions[SafeWeapon] * FalloutProfile, EnergyScale);
+			const double Displacement = NotYetDisplaced * DisplaceFraction;
 			Cell.DisplacedPopulation += Displacement;
 			NewDisplaced += Displacement;
 			Cell.PowerGridHealth = FMath::Clamp(Cell.PowerGridHealth - FalloutProfile * (SafeWeapon == 3 ? 0.62f : 1.0f), 0.0f, 1.0f);
 			Cell.HazardHeat = SafeWeapon == 4
 				? FMath::Min(Cell.HazardHeat, -0.8f * CoreProfile)
-				: FMath::Max(Cell.HazardHeat, CoreProfile * EnergyScale);
-			if (SafeWeapon == 5) Cell.HazardHeat = FMath::Max(Cell.HazardHeat, 1.5f * FalloutProfile);
+				: FMath::Max(Cell.HazardHeat, CoreProfile * FMath::Min(EnergyScale, 2.0f));
+			if (bNuclear) Cell.HazardHeat = FMath::Max(Cell.HazardHeat, 1.5f * FalloutProfile);
 		}
 	}
 
 	Telemetry.TotalCasualties += NewCasualties;
-	Telemetry.LivingPopulation = FMath::Max(0.0, Telemetry.LivingPopulation - NewCasualties);
-	Telemetry.DisplacedPopulation += NewDisplaced;
-	Telemetry.AtmosphereHealth = FMath::Max(0.0f, Telemetry.AtmosphereHealth - (SafeWeapon == 4 ? 0.06f : SafeWeapon == 5 ? 1.2f : 0.22f + EnergyScale * 0.55f));
-	Telemetry.MeanTemperatureC += SafeWeapon == 4 ? -0.55f : (SafeWeapon == 2 ? 0.22f : SafeWeapon == 3 ? -0.08f : SafeWeapon == 5 ? 0.38f : 0.04f);
+	const float AtmosphereHit = (SafeWeapon == 4 ? 0.06f : bNuclear ? 1.2f : 0.22f + FMath::Min(EnergyScale, 1.15f) * 0.55f) * YieldRoot;
+	Telemetry.AtmosphereHealth = FMath::Max(0.0f, Telemetry.AtmosphereHealth - AtmosphereHit);
+	Telemetry.MeanTemperatureC += (SafeWeapon == 4 ? -0.55f : (SafeWeapon == 2 ? 0.22f : SafeWeapon == 3 ? -0.08f : bNuclear ? 0.38f : 0.04f)) * YieldRoot;
 	Telemetry.DebrisMass += Energy * (SafeWeapon == 3 ? 0.012f : 0.028f);
 
-	GridPowerSum = 0.0f;
-	for (const FEarthfallPopulationCell& Cell : Cells) GridPowerSum += Cell.PowerGridHealth;
-	Telemetry.GridBlackoutPercent = Cells.IsEmpty() ? 0.0f : (1.0f - GridPowerSum / Cells.Num()) * 100.0f;
+	// Loft the ash plume. Soot shades the planet; fallout kills downwind.
+	const float PlumeScale = FMath::Pow(FMath::Max(YieldMultiplier, 0.01f), 0.75f) * FalloutMultiplier;
+	if (Spec.Soot * PlumeScale > 0.01f || Spec.Fallout * PlumeScale > 0.01f)
+	{
+		if (Plumes.Num() >= MaxPlumes) Plumes.RemoveAt(0);
+		FEarthfallAshPlume& Plume = Plumes.AddDefaulted_GetRef();
+		Plume.Latitude = FMath::Asin(FMath::Clamp(Center.Z, -1.0, 1.0));
+		Plume.Longitude = FMath::Atan2(-Center.Y, Center.X);
+		Plume.RadiusRadians = FMath::Clamp(StrikeAngle * 1.6f, 0.06f, 0.95f);
+		Plume.Soot = Spec.Soot * 6.0f * PlumeScale;
+		Plume.Fallout = Spec.Fallout * PlumeScale;
+	}
 
-	static const TCHAR* WeaponNames[] = {TEXT("kinetic impact"), TEXT("plasma lance"), TEXT("mantle charge"), TEXT("micro black hole"), TEXT("cryo impactor"), TEXT("thermonuclear strike")};
+	// Living, displaced and grid totals come from the authoritative grid. Running
+	// them up strike by strike let the displaced figure drift above the living
+	// population: casualties among the already-displaced were subtracted from the
+	// cells but never from the global running total.
+	RefreshPopulationTotals();
+
 	bool bNearCity = false;
 	const FString Region = DescribeImpactRegion(Center, bNearCity);
-	const double OffsetKm = StrikeAngle * EarthRadiusKm;
-	const FString CasualtyText = NewCasualties >= 1000000.0
-		? FString::Printf(TEXT("%.2fM"), NewCasualties / 1000000.0)
-		: FString::Printf(TEXT("%.0f"), NewCasualties);
+	const double ZoneKm = StrikeAngle * EarthRadiusKm;
 	const FString PowerText = FString::Printf(TEXT("%.0f%% grid blackout"), Telemetry.GridBlackoutPercent);
-	const FString Alert = SafeWeapon == 5 ? TEXT("fallout plume + regional EMP blackout")
+	const FString YieldText = FMath::IsNearlyEqual(YieldMultiplier, 1.0f) ? FString() : FString::Printf(TEXT(" x%g YIELD"), YieldMultiplier);
+	const TCHAR* Alert = bNuclear ? TEXT("fallout plume + regional EMP blackout")
 		: (SafeWeapon == 2 ? TEXT("seismic and coastal wave watch")
 		: (SafeWeapon == 1 ? TEXT("thermal plume advisory")
 		: (SafeWeapon == 4 ? TEXT("regional freeze warning") : TEXT("impact response"))));
-	const FString Dispatch = SafeWeapon == 5
-		? FString::Printf(TEXT("[NUCLEAR DETONATION · %s] Thermal + fallout %s casualties  //  %s  //  3.5x EMP radius"), *Region, *CasualtyText, *PowerText)
-		: FString::Printf(TEXT("[BREAKING · %s] Orbital %s  //  %s casualties  //  %s  //  %s"), *Region, WeaponNames[SafeWeapon], *CasualtyText, *PowerText, *Alert);
-	if (!bNearCity)
-	{
-		EnqueueNews(Dispatch + FString::Printf(TEXT("  //  %.0f KM IMPACT ZONE"), OffsetKm),
-			SafeWeapon == 5 ? 10 : (Telemetry.AtmosphereHealth < 70.0f ? 5 : (NewCasualties >= 100000000.0 ? 4 : (NewCasualties >= 1000000.0 ? 3 : 1))));
-	}
-	else
-	{
-		EnqueueNews(Dispatch, SafeWeapon == 5 ? 10 : (Telemetry.AtmosphereHealth < 70.0f ? 5 : (NewCasualties >= 100000000.0 ? 4 : (NewCasualties >= 1000000.0 ? 3 : 2))));
-	}
+	const FString Dispatch = bNuclear
+		? FString::Printf(TEXT("[NUCLEAR DETONATION%s · %s] %s casualties  //  %s displaced  //  %s  //  %s  //  %.0f KM ZONE"),
+			*YieldText, *Region, *FormatPeople(NewCasualties), *FormatPeople(NewDisplaced), *PowerText, Alert, ZoneKm)
+		: FString::Printf(TEXT("[BREAKING · %s] Orbital %s%s  //  %s casualties  //  %s displaced  //  %s  //  %s  //  %.0f KM ZONE"),
+			*Region, Spec.ReportName, *YieldText, *FormatPeople(NewCasualties), *FormatPeople(NewDisplaced), *PowerText, Alert, ZoneKm);
+	const int32 Priority = bNuclear ? 10
+		: (Telemetry.AtmosphereHealth < 70.0f ? 5
+		: (NewCasualties >= 100000000.0 ? 4
+		: (NewCasualties >= 1000000.0 ? 3 : (bNearCity ? 2 : 1))));
+	EnqueueNews(Dispatch, Priority);
 }
 
 void UEarthfallPopulationSubsystem::EnqueueNews(const FString& Text, int32 Priority)
@@ -285,12 +540,31 @@ void UEarthfallPopulationSubsystem::EnqueueNews(const FString& Text, int32 Prior
 	Event.Priority = Priority;
 	Event.Sequence = ++NewsSequence;
 	Event.Text = Text;
+	Event.TimeToLive = DispatchLifetimeForPriority(Priority);
+	const uint64 IncomingSequence = Event.Sequence;
 	NewsQueue.StableSort([](const FEarthfallNewsEvent& A, const FEarthfallNewsEvent& B)
 	{
 		return A.Priority == B.Priority ? A.Sequence > B.Sequence : A.Priority > B.Priority;
 	});
-	if (NewsQueue.Num() > 8) NewsQueue.SetNum(8);
-	Telemetry.LatestDispatch = NewsQueue.IsEmpty() ? Text : NewsQueue[0].Text;
+	if (NewsQueue.Num() > MaxDispatches)
+	{
+		// A low-priority dispatch must still reach air, so keep it over the oldest
+		// entry that would otherwise survive the trim.
+		const int32 IncomingIndex = NewsQueue.IndexOfByPredicate([IncomingSequence](const FEarthfallNewsEvent& E)
+		{
+			return E.Sequence == IncomingSequence;
+		});
+		if (IncomingIndex >= MaxDispatches) NewsQueue.Swap(MaxDispatches - 1, IncomingIndex);
+		NewsQueue.SetNum(MaxDispatches);
+	}
+	// Point the ticker at the incoming dispatch; rotation takes over from here.
+	const int32 CursorIndex = NewsQueue.IndexOfByPredicate([IncomingSequence](const FEarthfallNewsEvent& E)
+	{
+		return E.Sequence == IncomingSequence;
+	});
+	DispatchCursor = CursorIndex == INDEX_NONE ? 0 : CursorIndex;
+	DispatchRotationTimer = 0.0f;
+	Telemetry.LatestDispatch = NewsQueue.IsEmpty() ? Text : NewsQueue[DispatchCursor].Text;
 }
 
 void UEarthfallPopulationSubsystem::ResetSimulation()
@@ -300,7 +574,14 @@ void UEarthfallPopulationSubsystem::ResetSimulation()
 	Telemetry.LivingPopulation = InitialPopulation;
 	GridPowerSum = static_cast<float>(Cells.Num());
 	NewsQueue.Reset();
+	Plumes.Reset();
 	NewsSequence = 0;
+	DispatchCursor = 0;
+	DispatchRotationTimer = 0.0f;
+	HazardSweepCursor = 0;
+	FalloutDoseTimer = 0.0f;
+	FalloutNewsTimer = 0.0f;
+	FalloutCasualtiesSinceNews = 0.0;
 	EnqueueNews(Telemetry.LatestDispatch, 1);
 }
 

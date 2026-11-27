@@ -3,6 +3,7 @@ Build/
 DerivedDataCache/
 Intermediate/
 Saved/
+Scripts/__pycache__/
 .vs/
 .idea/
 *.sln

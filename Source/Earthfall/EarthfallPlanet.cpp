@@ -1,16 +1,16 @@
 #include "EarthfallPlanet.h"
 #include "EarthImpactFeedback.h"
 #include "EarthfallPopulationSubsystem.h"
-#include "ProceduralMeshComponent.h"
-#include "Materials/MaterialInterface.h"
-#include "Materials/MaterialInstanceDynamic.h"
-#include "Engine/TextureRenderTarget2D.h"
-#include "Engine/Texture2D.h"
+#include "Components/DirectionalLightComponent.h"
+#include "Components/SphereComponent.h"
 #include "Engine/Canvas.h"
 #include "Engine/DirectionalLight.h"
-#include "Components/DirectionalLightComponent.h"
+#include "Engine/Texture2D.h"
+#include "Engine/TextureRenderTarget2D.h"
 #include "EngineUtils.h"
 #include "Kismet/KismetRenderingLibrary.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
 
 namespace
@@ -19,358 +19,695 @@ constexpr int32 LatitudeSegments = 160;
 constexpr int32 LongitudeSegments = 320;
 constexpr int32 ImpactMaskWidth = 2048;
 constexpr int32 ImpactMaskHeight = 1024;
-constexpr int32 ImpactStampSize = 128;
+constexpr int32 StampSize = 128;
+constexpr int32 AshWidth = 1024;
+constexpr int32 AshHeight = 512;
+constexpr float AshStepSeconds = 0.1f;
+/** The ash field keeps simulating this long after the last strike, then idles. */
+constexpr float AshSimulationTailSeconds = 900.0f;
+/** Crater dents are capped at 3% of the radius, and never deeper than 96% in total. */
+constexpr float MaxCraterDepthFraction = 0.03f;
+constexpr float MinCraterRadiusFraction = 0.96f;
+
+// Weather: (seed, coverage threshold, zonal stretch, drift rad/s).
+const FLinearColor LowCloudWeather(0.0f, 0.575f, 1.25f, 0.004f);
+const FLinearColor HighCloudWeather(37.0f, 0.60f, 2.6f, 0.007f);
+// Look: (opacity, self-shadow strength, ash visibility, sun intensity).
+const FLinearColor LowCloudLook(1.0f, 1.7f, 1.0f, 1.55f);
+const FLinearColor HighCloudLook(0.42f, 0.9f, 0.0f, 1.55f);
+constexpr float SunIntensity = 1.75f;
+constexpr float CityLightGain = 3.2f;
+constexpr float SunglintGain = 2.6f;
 }
 
 AEarthfallPlanet::AEarthfallPlanet()
 {
-    PrimaryActorTick.bCanEverTick = true;
-    Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
-    SetRootComponent(Root);
-    PlanetMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("Planet"));
-    PlanetMesh->SetupAttachment(Root);
-    PlanetMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-    AimCollisionProxy = CreateDefaultSubobject<USphereComponent>(TEXT("AimCollisionProxy"));
-    AimCollisionProxy->SetupAttachment(Root);
-    AimCollisionProxy->SetSphereRadius(PlanetRadius);
-    AimCollisionProxy->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-    AimCollisionProxy->SetCollisionObjectType(ECC_WorldStatic);
-    AimCollisionProxy->SetCollisionResponseToAllChannels(ECR_Ignore);
-    AimCollisionProxy->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
-    AimCollisionProxy->SetGenerateOverlapEvents(false);
-    static ConstructorHelpers::FObjectFinder<UMaterialInterface> SurfaceMaterial(
-        TEXT("/Game/Earth/Materials/M_EarthPhotoreal.M_EarthPhotoreal"));
-    SurfaceMaterialInstance = SurfaceMaterial.Succeeded()
-        ? UMaterialInstanceDynamic::Create(SurfaceMaterial.Object, this) : nullptr;
-    if (SurfaceMaterialInstance)
-    {
-        PlanetMesh->SetMaterial(0, SurfaceMaterialInstance);
-    }
+	PrimaryActorTick.bCanEverTick = true;
+	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+	SetRootComponent(Root);
+
+	auto MakeShell = [this](const TCHAR* Name)
+	{
+		UProceduralMeshComponent* Shell = CreateDefaultSubobject<UProceduralMeshComponent>(Name);
+		Shell->SetupAttachment(Root);
+		Shell->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Shell->SetGenerateOverlapEvents(false);
+		Shell->SetCastShadow(false);
+		return Shell;
+	};
+	PlanetMesh = MakeShell(TEXT("Planet"));
+	LowCloudLayer = MakeShell(TEXT("LowCloudLayer"));
+	HighCloudLayer = MakeShell(TEXT("HighCloudLayer"));
+	AtmosphereShell = MakeShell(TEXT("AtmosphereShell"));
+
+	// The render mesh is visual-only; this cheap sphere owns every aim trace, so
+	// crater updates never trigger a physics recook.
+	AimCollisionProxy = CreateDefaultSubobject<USphereComponent>(TEXT("AimCollisionProxy"));
+	AimCollisionProxy->SetupAttachment(Root);
+	AimCollisionProxy->SetSphereRadius(PlanetRadius);
+	AimCollisionProxy->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	AimCollisionProxy->SetCollisionObjectType(ECC_WorldStatic);
+	AimCollisionProxy->SetCollisionResponseToAllChannels(ECR_Ignore);
+	AimCollisionProxy->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	AimCollisionProxy->SetGenerateOverlapEvents(false);
+
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Surface(TEXT("/Game/Earth/Materials/M_EarthPhotoreal.M_EarthPhotoreal"));
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Clouds(TEXT("/Game/Earth/Materials/M_EarthClouds.M_EarthClouds"));
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Atmosphere(TEXT("/Game/Earth/Materials/M_EarthAtmosphere.M_EarthAtmosphere"));
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Advection(TEXT("/Game/Earth/Materials/M_AshAdvection.M_AshAdvection"));
+	SurfaceMaterial = Surface.Succeeded() ? Surface.Object : nullptr;
+	CloudMaterial = Clouds.Succeeded() ? Clouds.Object : nullptr;
+	AtmosphereMaterial = Atmosphere.Succeeded() ? Atmosphere.Object : nullptr;
+	AshAdvectionMaterial = Advection.Succeeded() ? Advection.Object : nullptr;
 }
 
 void AEarthfallPlanet::BeginPlay()
 {
-    Super::BeginPlay();
-    BuildImpactMaskResources();
-    BuildPlanetMesh();
-    BuildAtmosphereAndCloudShells();
-    UpdateSunDirection();
-    UpdateImpactMask(0.0f, false);
+	Super::BeginPlay();
+	AimCollisionProxy->SetSphereRadius(PlanetRadius);
+	CreateMaterialInstances();
+	BuildImpactMaskResources();
+	BuildAshPlumeResources();
+	BuildSphereTopology();
+	BuildPlanetMesh();
+	BuildShell(LowCloudLayer, LowCloudScale, LowCloudMID, 10);
+	BuildShell(HighCloudLayer, HighCloudScale, HighCloudMID, 11);
+	BuildShell(AtmosphereShell, AtmosphereScale, AtmosphereMID, 12);
+	UpdateSunDirection();
+	UpdateEnvironment();
+	RedrawImpactMask();
+	PushShockParameters();
 }
 
 void AEarthfallPlanet::Tick(float DeltaSeconds)
 {
-    Super::Tick(DeltaSeconds);
-    AddActorLocalRotation(FRotator(0.0f, RotationDegreesPerSecond * DeltaSeconds, 0.0f));
-    if (CloudLayer) CloudLayer->AddLocalRotation(FRotator(0.0f, 0.08f * DeltaSeconds, 0.0f));
-    SunDirectionUpdateAccumulator += DeltaSeconds;
-    if (SunDirectionUpdateAccumulator >= 1.0f)
-    {
-        SunDirectionUpdateAccumulator = 0.0f;
-        UpdateSunDirection();
-    }
-    ImpactMaskUpdateAccumulator += DeltaSeconds;
-    if (ImpactMaskUpdateAccumulator >= 0.2f)
-    {
-        const float Step = ImpactMaskUpdateAccumulator;
-        ImpactMaskUpdateAccumulator = 0.0f;
-        UpdateImpactMask(Step, true);
-    }
+	Super::Tick(DeltaSeconds);
+	if (!FMath::IsNearlyZero(RotationDegreesPerSecond))
+	{
+		AddActorLocalRotation(FRotator(0.0f, RotationDegreesPerSecond * DeltaSeconds, 0.0f));
+	}
+
+	SunUpdateAccumulator += DeltaSeconds;
+	if (SunUpdateAccumulator >= 5.0f)
+	{
+		SunUpdateAccumulator = 0.0f;
+		UpdateSunDirection();
+	}
+
+	EnvironmentAccumulator += DeltaSeconds;
+	if (EnvironmentAccumulator >= 0.5f)
+	{
+		EnvironmentAccumulator = 0.0f;
+		UpdateEnvironment();
+	}
+
+	UpdateShocks(DeltaSeconds);
+
+	// The mask only changes while a stamp is still cooling or its cloud hole is
+	// still opening or healing, so an idle planet redraws nothing.
+	bool bAnyLive = false;
+	for (FImpactStamp& Stamp : ImpactStamps)
+	{
+		if (Stamp.IsLive())
+		{
+			Stamp.Age += DeltaSeconds;
+			bAnyLive = true;
+		}
+	}
+	MaskRedrawAccumulator += DeltaSeconds;
+	if (bImpactMaskDirty || (bAnyLive && MaskRedrawAccumulator >= 1.0f / 30.0f))
+	{
+		MaskRedrawAccumulator = 0.0f;
+		RedrawImpactMask();
+	}
+
+	if (AshActiveSeconds > 0.0f)
+	{
+		AshActiveSeconds -= DeltaSeconds;
+		AshStepAccumulator += DeltaSeconds;
+		if (AshStepAccumulator >= AshStepSeconds)
+		{
+			AdvanceAsh(AshStepAccumulator);
+			AshStepAccumulator = 0.0f;
+		}
+	}
+}
+
+FVector AEarthfallPlanet::GetSunDirectionWorld() const
+{
+	return GetActorTransform().TransformVectorNoScale(SunDirectionLocal).GetSafeNormal();
+}
+
+void AEarthfallPlanet::ForEachShadedMaterial(TFunctionRef<void(UMaterialInstanceDynamic*)> Visit) const
+{
+	for (UMaterialInstanceDynamic* Material : {SurfaceMID.Get(), LowCloudMID.Get(), HighCloudMID.Get(), AtmosphereMID.Get()})
+	{
+		if (Material) Visit(Material);
+	}
+}
+
+void AEarthfallPlanet::CreateMaterialInstances()
+{
+	SurfaceMID = SurfaceMaterial ? UMaterialInstanceDynamic::Create(SurfaceMaterial, this) : nullptr;
+	LowCloudMID = CloudMaterial ? UMaterialInstanceDynamic::Create(CloudMaterial, this) : nullptr;
+	HighCloudMID = CloudMaterial ? UMaterialInstanceDynamic::Create(CloudMaterial, this) : nullptr;
+	AtmosphereMID = AtmosphereMaterial ? UMaterialInstanceDynamic::Create(AtmosphereMaterial, this) : nullptr;
+	AshAdvectionMID = AshAdvectionMaterial ? UMaterialInstanceDynamic::Create(AshAdvectionMaterial, this) : nullptr;
+
+	if (SurfaceMID)
+	{
+		// The surface samples the low deck's weather so cloud shadows line up.
+		SurfaceMID->SetVectorParameterValue(TEXT("CloudLayer"), LowCloudWeather);
+		SurfaceMID->SetVectorParameterValue(TEXT("Tuning"), FLinearColor(SunIntensity, CityLightGain, 1.0f, SunglintGain));
+	}
+	if (LowCloudMID)
+	{
+		LowCloudMID->SetVectorParameterValue(TEXT("Layer"), LowCloudWeather);
+		LowCloudMID->SetVectorParameterValue(TEXT("Look"), LowCloudLook);
+	}
+	if (HighCloudMID)
+	{
+		HighCloudMID->SetVectorParameterValue(TEXT("Layer"), HighCloudWeather);
+		HighCloudMID->SetVectorParameterValue(TEXT("Look"), HighCloudLook);
+	}
+	if (AtmosphereMID)
+	{
+		AtmosphereMID->SetVectorParameterValue(TEXT("Shape"),
+			FLinearColor(PlanetRadius, PlanetRadius * AtmosphereScale, 1.0f, 1.0f));
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Geometry
+// ---------------------------------------------------------------------------
+void AEarthfallPlanet::BuildSphereTopology()
+{
+	BaseVertices.Reset();
+	Triangles.Reset();
+	SphereNormals.Reset();
+	UVs.Reset();
+	VertexColors.Reset();
+	Tangents.Reset();
+	for (int32 Lat = 0; Lat <= LatitudeSegments; ++Lat)
+	{
+		const float V = static_cast<float>(Lat) / LatitudeSegments;
+		const float Phi = V * PI;
+		for (int32 Lon = 0; Lon <= LongitudeSegments; ++Lon)
+		{
+			const float U = static_cast<float>(Lon) / LongitudeSegments;
+			// NASA equirectangular maps begin at 180W on the left edge.
+			const float Theta = (U - 0.5f) * 2.0f * PI;
+			// Unreal is left-handed: east must be -Y or the map is mirrored from outside.
+			const FVector Direction(FMath::Sin(Phi) * FMath::Cos(Theta), -FMath::Sin(Phi) * FMath::Sin(Theta), FMath::Cos(Phi));
+			BaseVertices.Add(Direction * PlanetRadius);
+			SphereNormals.Add(Direction);
+			UVs.Add(FVector2D(U, V));
+			VertexColors.Add(FLinearColor::White);
+			Tangents.Add(FProcMeshTangent(-FMath::Sin(Theta), -FMath::Cos(Theta), 0.0f));
+		}
+	}
+	for (int32 Lat = 0; Lat < LatitudeSegments; ++Lat)
+	{
+		for (int32 Lon = 0; Lon < LongitudeSegments; ++Lon)
+		{
+			const int32 A = Lat * (LongitudeSegments + 1) + Lon;
+			const int32 B = A + LongitudeSegments + 1;
+			if (Lat > 0) Triangles.Append({A, B, A + 1});
+			if (Lat < LatitudeSegments - 1) Triangles.Append({A + 1, B, B + 1});
+		}
+	}
 }
 
 void AEarthfallPlanet::BuildPlanetMesh()
 {
-    BaseVertices.Reset();
-    DeformedVertices.Reset();
-    Triangles.Reset();
-    Normals.Reset();
-    UVs.Reset();
-    VertexColors.Reset();
-    BaseVertexColors.Reset();
-    Tangents.Reset();
-    for (int32 Lat = 0; Lat <= LatitudeSegments; ++Lat)
-    {
-        const float V = static_cast<float>(Lat) / LatitudeSegments;
-        const float Phi = V * PI;
-        for (int32 Lon = 0; Lon <= LongitudeSegments; ++Lon)
-        {
-            const float U = static_cast<float>(Lon) / LongitudeSegments;
-            // NASA equirectangular maps begin at 180W on the left edge.
-            const float Theta = (U - 0.5f) * 2.0f * PI;
-            const FVector Direction(FMath::Sin(Phi) * FMath::Cos(Theta),
-                                    FMath::Sin(Phi) * FMath::Sin(Theta),
-                                    FMath::Cos(Phi));
-            BaseVertices.Add(Direction * PlanetRadius);
-            UVs.Add(FVector2D(U, V));
-            BaseVertexColors.Add(FLinearColor::White);
-            VertexColors.Add(FLinearColor::White);
-            Tangents.Add(FProcMeshTangent(-FMath::Sin(Theta), FMath::Cos(Theta), 0.0f));
-        }
-    }
-
-    for (int32 Lat = 0; Lat < LatitudeSegments; ++Lat)
-    {
-        for (int32 Lon = 0; Lon < LongitudeSegments; ++Lon)
-        {
-            const int32 A = Lat * (LongitudeSegments + 1) + Lon;
-            const int32 B = A + LongitudeSegments + 1;
-            if (Lat > 0) Triangles.Append({A, B, A + 1});
-            if (Lat < LatitudeSegments - 1) Triangles.Append({A + 1, B, B + 1});
-        }
-    }
-
-    DeformedVertices = BaseVertices;
-    Normals.SetNumUninitialized(DeformedVertices.Num());
-    for (int32 i = 0; i < DeformedVertices.Num(); ++i) Normals[i] = DeformedVertices[i].GetSafeNormal();
-    // The high-density render mesh is visual-only; the lightweight sphere proxy
-    // owns all aim traces, avoiding a Chaos recook after every crater update.
-    PlanetMesh->CreateMeshSection_LinearColor(0, DeformedVertices, Triangles, Normals, UVs, VertexColors, Tangents, false);
-    RefreshSurfaceVertexColors();
-    PlanetMesh->UpdateMeshSection_LinearColor(0, DeformedVertices, Normals, UVs, VertexColors, Tangents);
+	DeformedVertices = BaseVertices;
+	Normals = SphereNormals;
+	PlanetMesh->ClearMeshSection(0);
+	PlanetMesh->CreateMeshSection_LinearColor(0, DeformedVertices, Triangles, Normals, UVs, VertexColors, Tangents, false);
+	if (SurfaceMID) PlanetMesh->SetMaterial(0, SurfaceMID);
 }
 
-void AEarthfallPlanet::BuildAtmosphereAndCloudShells()
+void AEarthfallPlanet::BuildShell(UProceduralMeshComponent* Shell, float RadiusScale, UMaterialInstanceDynamic* Material, int32 SortPriority)
 {
-    UStaticMesh* Sphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-    UMaterialInterface* Atmosphere = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Earth/Materials/M_EarthAtmosphere.M_EarthAtmosphere"));
-    UMaterialInterface* Clouds = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Earth/Materials/M_EarthClouds.M_EarthClouds"));
-    if (SurfaceMaterialInstance && ImpactMaskRT)
-    {
-        SurfaceMaterialInstance->SetTextureParameterValue(TEXT("ImpactMaskRT"), ImpactMaskRT);
-        PlanetMesh->SetMaterial(0, SurfaceMaterialInstance);
-    }
-    if (Sphere && !AtmosphereShell)
-    {
-        AtmosphereShell = NewObject<UStaticMeshComponent>(this, TEXT("AtmosphereShell"));
-        AtmosphereShell->SetupAttachment(Root);
-        AtmosphereShell->SetStaticMesh(Sphere);
-        AtmosphereShell->SetRelativeScale3D(FVector(2.045f));
-        AtmosphereShell->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-        if (Atmosphere)
-        {
-            AtmosphereMaterialInstance = UMaterialInstanceDynamic::Create(Atmosphere, this);
-            AtmosphereShell->SetMaterial(0, AtmosphereMaterialInstance);
-        }
-        AtmosphereShell->RegisterComponent();
-    }
-    if (!CloudLayer)
-    {
-        CloudLayer = NewObject<UProceduralMeshComponent>(this, TEXT("CloudLayer"));
-        CloudLayer->SetupAttachment(Root);
-        CloudLayer->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-        CloudLayer->SetCastShadow(false);
-        CloudLayer->RegisterComponent();
-    }
-    CloudVertices = BaseVertices;
-    for (FVector& Vertex : CloudVertices) Vertex = Vertex.GetSafeNormal() * PlanetRadius * 1.012f;
-    CloudColors.SetNumUninitialized(CloudVertices.Num());
-    for (FLinearColor& Color : CloudColors) Color = FLinearColor::White;
-    if (CloudLayer && !CloudLayer->GetProcMeshSection(0))
-    {
-        CloudLayer->CreateMeshSection_LinearColor(0, CloudVertices, Triangles, Normals, UVs, CloudColors, Tangents, false);
-    }
-    if (Clouds)
-    {
-        CloudMaterialInstance = UMaterialInstanceDynamic::Create(Clouds, this);
-        if (ImpactMaskRT) CloudMaterialInstance->SetTextureParameterValue(TEXT("ImpactMaskRT"), ImpactMaskRT);
-        CloudLayer->SetMaterial(0, CloudMaterialInstance);
-        CloudLayer->SetVisibility(true);
-    }
+	if (!Shell) return;
+	TArray<FVector> ShellVertices;
+	ShellVertices.Reserve(BaseVertices.Num());
+	for (const FVector& Normal : SphereNormals) ShellVertices.Add(Normal * PlanetRadius * RadiusScale);
+	Shell->ClearMeshSection(0);
+	Shell->CreateMeshSection_LinearColor(0, ShellVertices, Triangles, SphereNormals, UVs, VertexColors, Tangents, false);
+	// Every shell shares the planet's origin, so distance sorting cannot order
+	// them. Explicit priorities draw low cloud, then high cloud, then air.
+	Shell->SetTranslucentSortPriority(SortPriority);
+	Shell->SetVisibility(Material != nullptr);
+	if (Material) Shell->SetMaterial(0, Material);
+}
+
+void AEarthfallPlanet::DeformCrater(const FVector& LocalDirection, const FEarthfallStrike& Strike)
+{
+	const float SafeRadius = FMath::Clamp(Strike.Radius, 2.0f, PlanetRadius * 0.45f);
+	static const float DepthScale[] = {1.0f, 0.72f, 1.38f, 1.55f, 0.5f, 0.82f};
+	// The dent stays shallow so triangles never tear; the shader's scorch, magma
+	// and the Niagara and mesh FX carry the violence instead.
+	const float Depth = FMath::Clamp(Strike.Energy * 0.12f * DepthScale[Strike.WeaponIndex], 0.0f, PlanetRadius * MaxCraterDepthFraction);
+	const float AngularRadius = SafeRadius / PlanetRadius;
+	const float CosAngle = FMath::Cos(AngularRadius * 1.08f);
+	const float Floor = PlanetRadius * MinCraterRadiusFraction;
+
+	bool bChanged = false;
+	for (int32 i = 0; i < DeformedVertices.Num(); ++i)
+	{
+		const float Dot = FVector::DotProduct(SphereNormals[i], LocalDirection);
+		if (Dot <= CosAngle) continue;
+		const float Normalized = FMath::Acos(FMath::Clamp(Dot, -1.0f, 1.0f)) / AngularRadius;
+		const float Bowl = 1.0f - FMath::SmoothStep(0.0f, 0.90f, Normalized);
+		const float Rim = FMath::SmoothStep(0.72f, 0.90f, Normalized) * (1.0f - FMath::SmoothStep(0.94f, 1.08f, Normalized));
+		const float NewRadius = FMath::Max(Floor, DeformedVertices[i].Size() - Depth * Bowl + Depth * 0.12f * Rim);
+		DeformedVertices[i] = SphereNormals[i] * NewRadius;
+		bChanged = true;
+	}
+	if (!bChanged) return;
+
+	for (FVector& Normal : Normals) Normal = FVector::ZeroVector;
+	for (int32 i = 0; i < Triangles.Num(); i += 3)
+	{
+		const int32 A = Triangles[i];
+		const int32 B = Triangles[i + 1];
+		const int32 C = Triangles[i + 2];
+		const FVector FaceNormal = FVector::CrossProduct(DeformedVertices[B] - DeformedVertices[A], DeformedVertices[C] - DeformedVertices[A]);
+		Normals[A] += FaceNormal;
+		Normals[B] += FaceNormal;
+		Normals[C] += FaceNormal;
+	}
+	for (int32 i = 0; i < Normals.Num(); ++i)
+	{
+		// Guard: keep every normal on the outward side of the sphere.
+		FVector Normal = Normals[i].GetSafeNormal();
+		if (Normal.IsNearlyZero()) Normal = SphereNormals[i];
+		if (FVector::DotProduct(Normal, SphereNormals[i]) < 0.0f) Normal = -Normal;
+		Normals[i] = Normal;
+	}
+	PlanetMesh->UpdateMeshSection_LinearColor(0, DeformedVertices, Normals, UVs, VertexColors, Tangents);
+}
+
+// ---------------------------------------------------------------------------
+// Impact mask: R = scorch over a 0.25 EMP plateau, G = heat, B = cloud clear.
+// ---------------------------------------------------------------------------
+UTexture2D* AEarthfallPlanet::CreateStampTexture(TFunctionRef<FColor(float)> Evaluate) const
+{
+	UTexture2D* Texture = UTexture2D::CreateTransient(StampSize, StampSize, PF_B8G8R8A8);
+	if (!Texture || !Texture->GetPlatformData() || Texture->GetPlatformData()->Mips.IsEmpty()) return nullptr;
+	// Stamp values are data, not colour: keep them linear so 0.25 lands as 0.25.
+	Texture->SRGB = false;
+	Texture->Filter = TF_Bilinear;
+	Texture->AddressX = TA_Clamp;
+	Texture->AddressY = TA_Clamp;
+	FTexture2DMipMap& Mip = Texture->GetPlatformData()->Mips[0];
+	FColor* Pixels = static_cast<FColor*>(Mip.BulkData.Lock(LOCK_READ_WRITE));
+	for (int32 Y = 0; Y < StampSize; ++Y)
+	{
+		for (int32 X = 0; X < StampSize; ++X)
+		{
+			const float DX = (X + 0.5f - StampSize * 0.5f) / (StampSize * 0.5f);
+			const float DY = (Y + 0.5f - StampSize * 0.5f) / (StampSize * 0.5f);
+			Pixels[Y * StampSize + X] = Evaluate(FMath::Sqrt(DX * DX + DY * DY));
+		}
+	}
+	Mip.BulkData.Unlock();
+	Texture->UpdateResource();
+	return Texture;
 }
 
 void AEarthfallPlanet::BuildImpactMaskResources()
 {
-    ImpactMaskRT = NewObject<UTextureRenderTarget2D>(this, TEXT("ImpactMaskRT"));
-    ImpactMaskRT->RenderTargetFormat = ETextureRenderTargetFormat::RTF_RGBA8;
-    ImpactMaskRT->ClearColor = FLinearColor::Black;
-    ImpactMaskRT->bAutoGenerateMips = false;
-    ImpactMaskRT->InitCustomFormat(ImpactMaskWidth, ImpactMaskHeight, PF_B8G8R8A8, false);
-    ImpactMaskRT->UpdateResourceImmediate(true);
+	ImpactMaskRT = NewObject<UTextureRenderTarget2D>(this, TEXT("ImpactMaskRT"));
+	ImpactMaskRT->RenderTargetFormat = ETextureRenderTargetFormat::RTF_RGBA8;
+	ImpactMaskRT->ClearColor = FLinearColor::Black;
+	ImpactMaskRT->bAutoGenerateMips = false;
+	ImpactMaskRT->AddressX = TA_Wrap;
+	ImpactMaskRT->AddressY = TA_Clamp;
+	ImpactMaskRT->InitCustomFormat(ImpactMaskWidth, ImpactMaskHeight, PF_B8G8R8A8, true);
+	ImpactMaskRT->UpdateResourceImmediate(true);
 
-    ImpactStampTexture = UTexture2D::CreateTransient(ImpactStampSize, ImpactStampSize, PF_B8G8R8A8);
-    if (!ImpactStampTexture) return;
-    ImpactStampTexture->Filter = TF_Bilinear;
-    ImpactStampTexture->AddressX = TA_Clamp;
-    ImpactStampTexture->AddressY = TA_Clamp;
-    FTexturePlatformData* PlatformData = ImpactStampTexture->GetPlatformData();
-    if (!PlatformData || PlatformData->Mips.IsEmpty()) return;
-    FTexture2DMipMap& Mip = PlatformData->Mips[0];
-    FColor* Pixels = static_cast<FColor*>(Mip.BulkData.Lock(LOCK_READ_WRITE));
-    for (int32 Y = 0; Y < ImpactStampSize; ++Y)
-    {
-        for (int32 X = 0; X < ImpactStampSize; ++X)
-        {
-            const float DX = (X + 0.5f - ImpactStampSize * 0.5f) / (ImpactStampSize * 0.5f);
-            const float DY = (Y + 0.5f - ImpactStampSize * 0.5f) / (ImpactStampSize * 0.5f);
-            const float R = FMath::Sqrt(DX * DX + DY * DY);
-            const float Coverage = 1.0f - FMath::SmoothStep(0.72f, 1.0f, R);
-            Pixels[Y * ImpactStampSize + X] = FColor(
-                FMath::RoundToInt(Coverage * 255.0f), FMath::RoundToInt(Coverage * 255.0f),
-                FMath::RoundToInt(Coverage * 255.0f), FMath::RoundToInt(Coverage * 255.0f));
-        }
-    }
-    Mip.BulkData.Unlock();
-    ImpactStampTexture->UpdateResource();
+	auto Byte = [](float Value) { return static_cast<uint8>(FMath::RoundToInt(FMath::Clamp(Value, 0.0f, 1.0f) * 255.0f)); };
+	ScorchStampTexture = CreateStampTexture([&Byte](float Distance)
+	{
+		const float Scorch = 1.0f - FMath::SmoothStep(0.55f, 0.95f, Distance);
+		const float Heat = FMath::Exp(-Distance * Distance * 3.2f) * (1.0f - FMath::SmoothStep(0.85f, 1.0f, Distance));
+		return FColor(Byte(Scorch), Byte(Heat), 0, 255);
+	});
+	EmpStampTexture = CreateStampTexture([&Byte](float Distance)
+	{
+		return FColor(Byte(0.25f * (1.0f - FMath::SmoothStep(0.80f, 1.0f, Distance))), 0, 0, 255);
+	});
+	ClearStampTexture = CreateStampTexture([&Byte](float Distance)
+	{
+		return FColor(0, 0, Byte(1.0f - FMath::SmoothStep(0.72f, 1.0f, Distance)), 255);
+	});
+
+	ForEachShadedMaterial([this](UMaterialInstanceDynamic* Material)
+	{
+		Material->SetTextureParameterValue(TEXT("ImpactMaskRT"), ImpactMaskRT);
+	});
 }
 
-void AEarthfallPlanet::StampImpactMask(const FVector& LocalDirection, float Radius, bool bNuclear)
+void AEarthfallPlanet::DrawStamp(UCanvas* Canvas, const FVector2D& CanvasSize, UTexture2D* Texture,
+	const FVector& Direction, float AngularRadius, const FLinearColor& Tint) const
 {
-    FImpactMaskStamp& Stamp = ImpactMaskStamps.AddDefaulted_GetRef();
-    Stamp.Direction = LocalDirection.GetSafeNormal();
-    Stamp.Radius = Radius;
-    Stamp.Age = 0.0f;
-    Stamp.bNuclear = bNuclear;
-    UpdateImpactMask(0.0f, false);
+	if (!Canvas || !Texture) return;
+	const float U = (FMath::Atan2(-Direction.Y, Direction.X) + PI) / (2.0f * PI);
+	const float V = FMath::Acos(FMath::Clamp(Direction.Z, -1.0f, 1.0f)) / PI;
+	// V spans PI radians and U spans 2*PI, stretched by 1/sin(colatitude) so the
+	// footprint stays round on the globe away from the poles.
+	const float SinColatitude = FMath::Max(0.10f, FMath::Sin(V * PI));
+	const float HalfV = FMath::Clamp(AngularRadius / PI, 0.0005f, 0.5f);
+	const float HalfU = FMath::Clamp(AngularRadius / (2.0f * PI * SinColatitude), 0.0005f, 0.5f);
+	const float Width = HalfU * 2.0f * CanvasSize.X;
+	const float Height = HalfV * 2.0f * CanvasSize.Y;
+	for (int32 Wrap = -1; Wrap <= 1; ++Wrap)
+	{
+		const float CenterX = (U + static_cast<float>(Wrap)) * CanvasSize.X;
+		if (CenterX + Width * 0.5f < 0.0f || CenterX - Width * 0.5f > CanvasSize.X) continue;
+		Canvas->K2_DrawTexture(Texture, FVector2D(CenterX - Width * 0.5f, V * CanvasSize.Y - Height * 0.5f),
+			FVector2D(Width, Height), FVector2D::ZeroVector, FVector2D(1.0f, 1.0f), Tint, BLEND_Additive, 0.0f, FVector2D(0.5f, 0.5f));
+	}
 }
 
-void AEarthfallPlanet::UpdateImpactMask(float DeltaSeconds, bool bAdvanceAge)
+void AEarthfallPlanet::RedrawImpactMask()
 {
-    if (!ImpactMaskRT || !ImpactStampTexture || !GetWorld()) return;
-    if (bAdvanceAge)
-    {
-        for (FImpactMaskStamp& Stamp : ImpactMaskStamps) Stamp.Age += DeltaSeconds;
-    }
-    UKismetRenderingLibrary::ClearRenderTarget2D(GetWorld(), ImpactMaskRT, FLinearColor::Black);
-    UCanvas* Canvas = nullptr;
-    FVector2D CanvasSize;
-    FDrawToRenderTargetContext Context;
-    UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(GetWorld(), ImpactMaskRT, Canvas, CanvasSize, Context);
-    if (Canvas)
-    {
-        for (const FImpactMaskStamp& Stamp : ImpactMaskStamps)
-        {
-            const FVector Direction = Stamp.Direction;
-            const float U = (FMath::Atan2(Direction.Y, Direction.X) + PI) / (2.0f * PI);
-            const float V = FMath::Acos(FMath::Clamp(Direction.Z, -1.0f, 1.0f)) / PI;
-            const float AngularRadius = Stamp.Radius / PlanetRadius;
-            const float HalfU = FMath::Clamp(AngularRadius / (2.0f * PI * FMath::Max(0.12f, FMath::Cos(V * PI - PI * 0.5f))), 0.0005f, 0.24f);
-            const float HalfV = FMath::Clamp(AngularRadius / (2.0f * PI), 0.0005f, 0.24f);
-            const float Width = HalfU * 2.0f * CanvasSize.X;
-            const float Height = HalfV * 2.0f * CanvasSize.Y;
-            const float Heat = FMath::Exp(-Stamp.Age / (Stamp.bNuclear ? 36.0f : 18.0f));
-            const float CloudClear = FMath::Clamp(1.0f - Stamp.Age / (Stamp.bNuclear ? 36.0f : 16.0f), 0.0f, 1.0f);
-            const FLinearColor Tint(0.86f, Heat, CloudClear, 1.0f);
-            for (int32 Wrap = -1; Wrap <= 1; ++Wrap)
-            {
-                const float CenterX = (U + static_cast<float>(Wrap)) * CanvasSize.X;
-                if (CenterX + Width * 0.5f < 0.0f || CenterX - Width * 0.5f > CanvasSize.X) continue;
-                Canvas->K2_DrawTexture(ImpactStampTexture,
-                    FVector2D(CenterX - Width * 0.5f, V * CanvasSize.Y - Height * 0.5f), FVector2D(Width, Height),
-                    FVector2D::ZeroVector, FVector2D(1.0f, 1.0f), Tint, BLEND_Additive, 0.0f, FVector2D(0.5f, 0.5f));
-            }
-        }
-    }
-    UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(GetWorld(), Context);
+	bImpactMaskDirty = false;
+	if (!ImpactMaskRT || !GetWorld()) return;
+	UKismetRenderingLibrary::ClearRenderTarget2D(GetWorld(), ImpactMaskRT, FLinearColor::Black);
+	if (ImpactStamps.IsEmpty()) return;
+
+	UCanvas* Canvas = nullptr;
+	FVector2D CanvasSize;
+	FDrawToRenderTargetContext Context;
+	UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(GetWorld(), ImpactMaskRT, Canvas, CanvasSize, Context);
+	for (const FImpactStamp& Stamp : ImpactStamps)
+	{
+		if (Stamp.bNuclear)
+		{
+			// Wide EMP plateau: city lights die far beyond the scorched core.
+			DrawStamp(Canvas, CanvasSize, EmpStampTexture, Stamp.Direction, Stamp.Radius * 3.5f, FLinearColor::White);
+		}
+		const float Heat = FMath::Exp(-Stamp.Age / Stamp.HeatSeconds);
+		DrawStamp(Canvas, CanvasSize, ScorchStampTexture, Stamp.Direction, Stamp.Radius, FLinearColor(1.0f, Heat, 0.0f, 1.0f));
+
+		// The hole in the clouds opens behind the shock front, holds, then heals.
+		const float ClearRadius = FMath::Min(Stamp.ClearSpeed * Stamp.Age, Stamp.ClearMaxRadius);
+		const float ClearAmount = 1.0f - FMath::SmoothStep(Stamp.ClearHoldSeconds, Stamp.ClearHoldSeconds + Stamp.ClearFadeSeconds, Stamp.Age);
+		if (ClearRadius > 0.004f && ClearAmount > 0.004f)
+		{
+			DrawStamp(Canvas, CanvasSize, ClearStampTexture, Stamp.Direction, ClearRadius, FLinearColor(0.0f, 0.0f, ClearAmount, 1.0f));
+		}
+	}
+	UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(GetWorld(), Context);
 }
 
+// ---------------------------------------------------------------------------
+// Ash: a ping-pong pair advected by M_AshAdvection. R soot, G fallout, B deposit.
+// ---------------------------------------------------------------------------
+void AEarthfallPlanet::BuildAshPlumeResources()
+{
+	AshPlumeRTs.SetNum(2);
+	for (int32 Index = 0; Index < AshPlumeRTs.Num(); ++Index)
+	{
+		UTextureRenderTarget2D* Target = NewObject<UTextureRenderTarget2D>(this, *FString::Printf(TEXT("AshPlumeRT_%d"), Index));
+		// Half-float: an 8-bit target cannot represent a slow exponential decay,
+		// because x * 0.997 rounds straight back to x below ~0.65.
+		Target->RenderTargetFormat = ETextureRenderTargetFormat::RTF_RGBA16f;
+		Target->ClearColor = FLinearColor::Black;
+		Target->bAutoGenerateMips = false;
+		Target->AddressX = TA_Wrap;
+		Target->AddressY = TA_Clamp;
+		Target->InitAutoFormat(AshWidth, AshHeight);
+		Target->UpdateResourceImmediate(true);
+		AshPlumeRTs[Index] = Target;
+	}
+	AshStampTexture = CreateStampTexture([](float Distance)
+	{
+		const float Density = FMath::Exp(-Distance * Distance * 3.8f) * (1.0f - FMath::SmoothStep(0.82f, 1.0f, Distance));
+		const uint8 Value = static_cast<uint8>(FMath::RoundToInt(Density * 255.0f));
+		return FColor(Value, Value, Value, 255);
+	});
+	AshReadIndex = 0;
+	BindAshTexture();
+}
+
+void AEarthfallPlanet::BindAshTexture()
+{
+	if (!AshPlumeRTs.IsValidIndex(AshReadIndex)) return;
+	UTextureRenderTarget2D* Current = AshPlumeRTs[AshReadIndex];
+	if (SurfaceMID) SurfaceMID->SetTextureParameterValue(TEXT("AshPlumeRT"), Current);
+	if (LowCloudMID) LowCloudMID->SetTextureParameterValue(TEXT("AshPlumeRT"), Current);
+	if (HighCloudMID) HighCloudMID->SetTextureParameterValue(TEXT("AshPlumeRT"), Current);
+}
+
+void AEarthfallPlanet::StampAsh(const FVector& LocalDirection, float AngularRadius, float Soot, float Fallout)
+{
+	if (!GetWorld() || AshPlumeRTs.Num() != 2 || !AshStampTexture || (Soot <= 0.0f && Fallout <= 0.0f)) return;
+	UCanvas* Canvas = nullptr;
+	FVector2D CanvasSize;
+	FDrawToRenderTargetContext Context;
+	UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(GetWorld(), AshPlumeRTs[AshReadIndex], Canvas, CanvasSize, Context);
+	DrawStamp(Canvas, CanvasSize, AshStampTexture, LocalDirection, AngularRadius, FLinearColor(Soot, Fallout, 0.0f, 1.0f));
+	UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(GetWorld(), Context);
+	AshActiveSeconds = AshSimulationTailSeconds;
+}
+
+void AEarthfallPlanet::AdvanceAsh(float StepSeconds)
+{
+	if (!GetWorld() || AshPlumeRTs.Num() != 2 || !AshAdvectionMID) return;
+	const UEarthfallPopulationSubsystem* Population = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>();
+	const float WindTime = Population ? static_cast<float>(Population->GetWindTime()) : GetWorld()->GetTimeSeconds();
+	const int32 WriteIndex = 1 - AshReadIndex;
+	AshAdvectionMID->SetTextureParameterValue(TEXT("AshSource"), AshPlumeRTs[AshReadIndex]);
+	AshAdvectionMID->SetVectorParameterValue(TEXT("Step"), FLinearColor(StepSeconds, WindTime, 1.0f / AshWidth, 1.0f / AshHeight));
+	UKismetRenderingLibrary::DrawMaterialToRenderTarget(GetWorld(), AshPlumeRTs[WriteIndex], AshAdvectionMID);
+	AshReadIndex = WriteIndex;
+	BindAshTexture();
+}
+
+// ---------------------------------------------------------------------------
+// Shockwaves
+// ---------------------------------------------------------------------------
+void AEarthfallPlanet::StartShock(const FVector& LocalDirection, float BlastAngle, const FEarthfallStrike& Strike, float& OutMaxRadius, float& OutSpeed)
+{
+	const bool bNuclear = Strike.WeaponIndex == EarthfallWeapons::Nuclear;
+	OutMaxRadius = FMath::Clamp(BlastAngle * (bNuclear ? 5.0f : 3.0f) + 0.06f, 0.10f, 2.9f);
+	const float Duration = bNuclear ? 9.0f : FMath::Clamp(3.5f + BlastAngle * 6.0f, 3.5f, 8.0f);
+	OutSpeed = OutMaxRadius / Duration;
+
+	// Reuse an idle slot, otherwise retire whichever wave is closest to finishing.
+	int32 Slot = 0;
+	float BestProgress = -1.0f;
+	for (int32 Index = 0; Index < ShockSlots; ++Index)
+	{
+		const float Progress = Shocks[Index].bActive ? Shocks[Index].Speed * Shocks[Index].Age / Shocks[Index].MaxRadius : 2.0f;
+		if (Progress > BestProgress)
+		{
+			BestProgress = Progress;
+			Slot = Index;
+		}
+	}
+
+	static const float FlashPeaks[] = {0.7f, 1.2f, 1.6f, 0.9f, 1.0f, 3.2f};
+	FShock& Shock = Shocks[Slot];
+	Shock.bActive = true;
+	Shock.bNuclear = bNuclear;
+	Shock.Direction = LocalDirection;
+	Shock.Age = 0.0f;
+	Shock.MaxRadius = OutMaxRadius;
+	Shock.Speed = OutSpeed;
+	Shock.FlashPeak = FlashPeaks[Strike.WeaponIndex] * FMath::Pow(FMath::Max(Strike.YieldMultiplier, 0.01f), 0.25f);
+	Shock.FlashRadius = BlastAngle * 1.6f + 0.10f;
+	Shock.FlashColor = bNuclear ? FLinearColor(1.0f, 0.82f, 0.62f) : EarthfallWeapons::Get(Strike.WeaponIndex).Color;
+	bShockParametersDirty = true;
+}
+
+void AEarthfallPlanet::UpdateShocks(float DeltaSeconds)
+{
+	bool bAnyActive = false;
+	for (FShock& Shock : Shocks)
+	{
+		if (!Shock.bActive) continue;
+		Shock.Age += DeltaSeconds;
+		if (Shock.Speed * Shock.Age >= Shock.MaxRadius && Shock.Age > 4.0f)
+		{
+			Shock.bActive = false;
+			bShockParametersDirty = true;
+			continue;
+		}
+		bAnyActive = true;
+	}
+	if (bAnyActive || bShockParametersDirty) PushShockParameters();
+}
+
+void AEarthfallPlanet::PushShockParameters()
+{
+	bShockParametersDirty = false;
+	for (int32 Index = 0; Index < ShockSlots; ++Index)
+	{
+		const FShock& Shock = Shocks[Index];
+		FLinearColor A(0.0f, 0.0f, 0.0f, 0.0f);
+		FLinearColor B(0.0f, 0.0f, 0.0f, 0.0f);
+		FLinearColor C(0.0f, 0.0f, 0.0f, 0.0f);
+		if (Shock.bActive)
+		{
+			const float Radius = FMath::Min(Shock.Speed * Shock.Age, Shock.MaxRadius);
+			const float Progress = Radius / Shock.MaxRadius;
+			const float Fade = FMath::Pow(FMath::Max(1.0f - Progress, 0.0f), 0.6f);
+			// A nuclear fireball flashes twice: an instant spike, then a slower,
+			// longer second pulse as the shock front turns transparent again.
+			const float Flash = Shock.bNuclear
+				? Shock.FlashPeak * (FMath::Exp(-Shock.Age / 0.05f) + 0.40f * (Shock.Age / 0.45f) * FMath::Exp(1.0f - Shock.Age / 0.45f))
+				: Shock.FlashPeak * FMath::Exp(-Shock.Age / 0.35f);
+			A = FLinearColor(Shock.Direction.X, Shock.Direction.Y, Shock.Direction.Z, Radius);
+			B = FLinearColor(Fade, Flash, Shock.FlashRadius, Fade * (0.35f + 0.65f * (1.0f - Progress)));
+			C = Shock.FlashColor;
+		}
+		const FName NameA(*FString::Printf(TEXT("ShockA%d"), Index));
+		const FName NameB(*FString::Printf(TEXT("ShockB%d"), Index));
+		const FName NameC(*FString::Printf(TEXT("ShockC%d"), Index));
+		for (UMaterialInstanceDynamic* Material : {SurfaceMID.Get(), LowCloudMID.Get(), HighCloudMID.Get()})
+		{
+			if (!Material) continue;
+			Material->SetVectorParameterValue(NameA, A);
+			Material->SetVectorParameterValue(NameB, B);
+			Material->SetVectorParameterValue(NameC, C);
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Sun and environment
+// ---------------------------------------------------------------------------
 void AEarthfallPlanet::UpdateSunDirection()
 {
-    if (!SurfaceMaterialInstance || !GetWorld()) return;
-    const FDateTime UtcNow = FDateTime::UtcNow();
-    const double DayPhase = 2.0 * PI * (static_cast<double>(UtcNow.GetDayOfYear()) - 81.0) / 365.2422;
-    const double Declination = FMath::DegreesToRadians(23.44) * FMath::Sin(DayPhase);
-    const double UtcHours = UtcNow.GetHour() + UtcNow.GetMinute() / 60.0 + UtcNow.GetSecond() / 3600.0;
-    const double HourAngle = FMath::DegreesToRadians((UtcHours - 12.0) * 15.0);
-    const FVector ToSun(
-        FMath::Cos(Declination) * FMath::Cos(HourAngle),
-        -FMath::Cos(Declination) * FMath::Sin(HourAngle),
-        FMath::Sin(Declination));
-    for (TActorIterator<ADirectionalLight> It(GetWorld()); It; ++It)
-    {
-        if (!It->ActorHasTag(FName(TEXT("EarthfallSun")))) continue;
-        It->SetActorRotation((-ToSun).Rotation());
-        break;
-    }
-    SurfaceMaterialInstance->SetVectorParameterValue(
-        TEXT("SunDirection"), FLinearColor(ToSun.X, ToSun.Y, ToSun.Z, 0.0f));
+	if (!GetWorld()) return;
+	SunDirectionLocal = EarthfallSolar::ComputeToSun();
+	const FVector ToSunWorld = GetSunDirectionWorld();
+	for (TActorIterator<ADirectionalLight> It(GetWorld()); It; ++It)
+	{
+		if (!It->ActorHasTag(FName(TEXT("EarthfallSun")))) continue;
+		It->SetActorRotation((-ToSunWorld).Rotation());
+		break;
+	}
+	const FLinearColor Sun(SunDirectionLocal.X, SunDirectionLocal.Y, SunDirectionLocal.Z, 0.0f);
+	ForEachShadedMaterial([&Sun](UMaterialInstanceDynamic* Material)
+	{
+		Material->SetVectorParameterValue(TEXT("SunDirection"), Sun);
+	});
 }
 
-void AEarthfallPlanet::RefreshSurfaceVertexColors()
+void AEarthfallPlanet::UpdateEnvironment()
 {
-    for (FLinearColor& Color : VertexColors) Color = FLinearColor::White;
+	const UEarthfallPopulationSubsystem* Population = GetWorld() ? GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>() : nullptr;
+	if (!Population) return;
+	const FEarthfallTelemetry Telemetry = Population->GetTelemetry();
+	// A choked atmosphere turns the limb from Rayleigh blue toward soot brown and
+	// dims the sun reaching the ground.
+	const float Health = FMath::Clamp(Telemetry.AtmosphereHealth / 100.0f, 0.0f, 1.0f);
+	const float Sunlight = FMath::Clamp(Telemetry.SunlightPercent / 100.0f, 0.25f, 1.0f);
+	if (SurfaceMID)
+	{
+		SurfaceMID->SetVectorParameterValue(TEXT("Tuning"), FLinearColor(SunIntensity * Sunlight, CityLightGain, Health, SunglintGain));
+	}
+	if (AtmosphereMID)
+	{
+		AtmosphereMID->SetVectorParameterValue(TEXT("Shape"),
+			FLinearColor(PlanetRadius, PlanetRadius * AtmosphereScale, 1.0f, Health));
+	}
 }
 
+// ---------------------------------------------------------------------------
+// Strikes
+// ---------------------------------------------------------------------------
 void AEarthfallPlanet::ResetPlanet()
 {
-    if (UEarthfallPopulationSubsystem* Population = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>()) Population->ResetSimulation();
-    ImpactMaskStamps.Reset();
-    if (ImpactMaskRT) UKismetRenderingLibrary::ClearRenderTarget2D(GetWorld(), ImpactMaskRT, FLinearColor::Black);
-    if (CloudLayer) CloudLayer->SetRelativeRotation(FRotator::ZeroRotator);
-    BuildPlanetMesh();
-    UpdateImpactMask(0.0f, false);
+	if (!GetWorld()) return;
+	if (UEarthfallPopulationSubsystem* Population = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>()) Population->ResetSimulation();
+	ImpactStamps.Reset();
+	for (FShock& Shock : Shocks) Shock = FShock();
+	for (UTextureRenderTarget2D* AshTarget : AshPlumeRTs)
+	{
+		if (AshTarget) UKismetRenderingLibrary::ClearRenderTarget2D(GetWorld(), AshTarget, FLinearColor::Black);
+	}
+	AshReadIndex = 0;
+	AshActiveSeconds = 0.0f;
+	AshStepAccumulator = 0.0f;
+	BindAshTexture();
+	BuildPlanetMesh();
+	RedrawImpactMask();
+	PushShockParameters();
+	UpdateEnvironment();
 }
 
 void AEarthfallPlanet::ApplyImpact(FVector WorldLocation, float Radius, float Energy, int32 WeaponIndex)
 {
-    const FVector LocalDirection = GetActorTransform().InverseTransformVectorNoScale(WorldLocation - GetActorLocation()).GetSafeNormal();
-    const bool bNuclear = WeaponIndex == 5;
-    StampImpactMask(LocalDirection, Radius * (bNuclear ? 3.5f : 1.0f), bNuclear);
-    if (UEarthfallPopulationSubsystem* Population = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>())
-    {
-        Population->ApplyStrike(LocalDirection, Radius / PlanetRadius, Energy, WeaponIndex);
-    }
-    const FVector WorldNormal = GetActorTransform().TransformVectorNoScale(LocalDirection).GetSafeNormal();
-    const FVector SurfacePoint = WorldLocation;
-    const float SafeRadius = FMath::Clamp(Radius, 2.0f, PlanetRadius * 0.45f);
-    const float WeaponDepthScale[] = {1.0f, 0.72f, 1.38f, 1.55f, 0.5f, 0.82f};
-    const float Depth = FMath::Clamp(Energy * 0.12f * WeaponDepthScale[FMath::Clamp(WeaponIndex, 0, 5)], 2.0f, PlanetRadius * 0.28f);
-    const float CosAngle = FMath::Cos(SafeRadius / PlanetRadius);
+	FEarthfallStrike Strike;
+	Strike.WorldLocation = WorldLocation;
+	Strike.WeaponIndex = FMath::Clamp(WeaponIndex, 0, EarthfallWeapons::Count - 1);
+	Strike.Radius = Radius;
+	Strike.Energy = Energy;
+	ApplyStrike(Strike);
+}
 
-    for (int32 i = 0; i < BaseVertices.Num(); ++i)
-    {
-        const FVector Direction = DeformedVertices[i].GetSafeNormal();
-        const float Dot = FVector::DotProduct(Direction, LocalDirection);
-        if (Dot <= CosAngle) continue;
+void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
+{
+	if (!GetWorld()) return;
+	const FVector LocalDirection = GetActorTransform().InverseTransformVectorNoScale(Strike.WorldLocation - GetActorLocation()).GetSafeNormal();
+	if (LocalDirection.IsNearlyZero()) return;
+	const FEarthfallWeaponSpec& Spec = EarthfallWeapons::Get(Strike.WeaponIndex);
+	const bool bNuclear = Strike.WeaponIndex == EarthfallWeapons::Nuclear;
+	const float BlastAngle = FMath::Clamp(Strike.Radius / PlanetRadius, 0.01f, 2.6f);
+	const float YieldLog = FMath::Max(0.0f, FMath::Log2(FMath::Max(Strike.YieldMultiplier, 1.0f)));
 
-        const float Falloff = FMath::Clamp((Dot - CosAngle) / (1.0f - CosAngle), 0.0f, 1.0f);
-        const float SmoothFalloff = Falloff * Falloff * (3.0f - 2.0f * Falloff);
-        const float AngularDistance = FMath::Acos(FMath::Clamp(Dot, -1.0f, 1.0f));
-        const float NormalizedDistance = AngularDistance / (SafeRadius / PlanetRadius);
-        const float RimIn = FMath::SmoothStep(0.72f, 0.88f, NormalizedDistance);
-        const float RimOut = 1.0f - FMath::SmoothStep(0.94f, 1.08f, NormalizedDistance);
-        const float RimLift = RimIn * RimOut * Depth * 0.12f;
-        const float NewRadius = FMath::Max(PlanetRadius * 0.55f,
-            DeformedVertices[i].Size() - Depth * SmoothFalloff + RimLift);
-        DeformedVertices[i] = Direction * NewRadius;
-    }
+	float ShockMaxRadius = 0.0f;
+	float ShockSpeed = 0.0f;
+	StartShock(LocalDirection, BlastAngle, Strike, ShockMaxRadius, ShockSpeed);
 
-    for (FVector& Normal : Normals) Normal = FVector::ZeroVector;
-    for (int32 i = 0; i < Triangles.Num(); i += 3)
-    {
-        const int32 A = Triangles[i];
-        const int32 B = Triangles[i + 1];
-        const int32 C = Triangles[i + 2];
-        const FVector FaceNormal = FVector::CrossProduct(
-            DeformedVertices[B] - DeformedVertices[A], DeformedVertices[C] - DeformedVertices[A]);
-        Normals[A] += FaceNormal;
-        Normals[B] += FaceNormal;
-        Normals[C] += FaceNormal;
-    }
-    for (int32 i = 0; i < Normals.Num(); ++i)
-    {
-        Normals[i] = Normals[i].IsNearlyZero() ? BaseVertices[i].GetSafeNormal() : Normals[i].GetSafeNormal();
-    }
+	if (ImpactStamps.Num() >= MaxImpactStamps) ImpactStamps.RemoveAt(0);
+	FImpactStamp& Stamp = ImpactStamps.AddDefaulted_GetRef();
+	Stamp.Direction = LocalDirection;
+	Stamp.Radius = BlastAngle;
+	Stamp.bNuclear = bNuclear;
+	Stamp.HeatSeconds = (bNuclear ? 14.0f : 8.0f) * (1.0f + 0.15f * YieldLog);
+	Stamp.ClearMaxRadius = FMath::Min(BlastAngle * (bNuclear ? 3.5f : 1.7f), 2.6f);
+	Stamp.ClearSpeed = ShockSpeed;
+	Stamp.ClearHoldSeconds = bNuclear ? 40.0f : 22.0f;
+	Stamp.ClearFadeSeconds = bNuclear ? 60.0f : 35.0f;
+	bImpactMaskDirty = true;
 
-    // Update the existing section and refresh collision for subsequent aiming traces.
-    PlanetMesh->UpdateMeshSection_LinearColor(0, DeformedVertices, Normals, UVs, VertexColors, Tangents);
+	// Visible plume: lofted mass scales sub-linearly so a 100x strike is a
+	// continental smear rather than a solid black disc.
+	const float PlumeScale = FMath::Pow(FMath::Max(Strike.YieldMultiplier, 0.01f), 0.4f) * FMath::Pow(Strike.FalloutMultiplier, 0.7f);
+	StampAsh(LocalDirection, BlastAngle * 1.4f + 0.03f,
+		FMath::Min(Spec.Soot * 0.9f * PlumeScale, 3.0f), FMath::Min(Spec.Fallout * 0.9f * PlumeScale, 3.0f));
 
-    FActorSpawnParameters Params;
-    Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-    AEarthImpactFeedback* Feedback = GetWorld()->SpawnActor<AEarthImpactFeedback>(
-        AEarthImpactFeedback::StaticClass(), SurfacePoint, FRotationMatrix::MakeFromZ(WorldNormal).Rotator(), Params);
-    if (Feedback)
-    {
-        static const FLinearColor Colors[] = {
-            FLinearColor(1.0f, 0.66f, 0.34f),
-            FLinearColor(0.2f, 0.86f, 1.0f),
-            FLinearColor(1.0f, 0.22f, 0.035f),
-            FLinearColor(0.55f, 0.22f, 0.95f),
-            FLinearColor(0.55f, 0.88f, 1.0f),
-            FLinearColor(0.82f, 0.92f, 1.0f)
-        };
-        static const float Lifetimes[] = {0.42f, 0.82f, 1.45f, 1.25f, 1.1f, 4.4f};
-        static const float FlashIntensities[] = {18000.0f, 26000.0f, 38000.0f, 30000.0f, 22000.0f, 240000.0f};
-        const int32 SafeWeapon = FMath::Clamp(WeaponIndex, 0, 5);
-        Feedback->InitFeedback(SafeRadius, Colors[SafeWeapon], Lifetimes[SafeWeapon], SafeWeapon == 1, FlashIntensities[SafeWeapon], SafeWeapon == 3, SafeWeapon == 5);
-    }
+	if (UEarthfallPopulationSubsystem* Population = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>())
+	{
+		Population->ApplyStrike(LocalDirection, BlastAngle, Strike.Energy, Strike.WeaponIndex, Strike.YieldMultiplier, Strike.FalloutMultiplier);
+	}
+	UpdateEnvironment();
+	DeformCrater(LocalDirection, Strike);
+
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	const FVector WorldNormal = GetActorTransform().TransformVectorNoScale(LocalDirection).GetSafeNormal();
+	const FVector SurfacePoint = GetActorLocation() + WorldNormal * PlanetRadius;
+	if (AEarthImpactFeedback* Feedback = GetWorld()->SpawnActor<AEarthImpactFeedback>(
+		AEarthImpactFeedback::StaticClass(), SurfacePoint, FRotationMatrix::MakeFromZ(WorldNormal).Rotator(), Params))
+	{
+		FEarthfallImpactFX FX;
+		FX.PlanetCenter = GetActorLocation();
+		FX.PlanetRadius = PlanetRadius;
+		FX.Normal = WorldNormal;
+		FX.WeaponIndex = Strike.WeaponIndex;
+		FX.BlastRadius = FMath::Clamp(Strike.Radius, 2.0f, PlanetRadius * 0.9f);
+		FX.ShockMaxRadius = ShockMaxRadius;
+		FX.ShockSpeed = ShockSpeed;
+		FX.YieldMultiplier = Strike.YieldMultiplier;
+		Feedback->InitFeedback(FX);
+	}
 }

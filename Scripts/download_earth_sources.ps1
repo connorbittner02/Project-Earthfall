@@ -6,13 +6,16 @@ New-Item -ItemType Directory -Force -Path $Stage | Out-Null
 $Sources = @(
     @{ Name = 'NASA_BlueMarble_Day.jpg'; Url = 'https://assets.science.nasa.gov/content/dam/science/esd/eo/images/bmng/bmng-base/october/world.200410.3x21600x10800.jpg' },
     @{ Name = 'NASA_BlackMarble_2016_3km.jpg'; Url = 'https://assets.science.nasa.gov/content/dam/science/esd/eo/images/imagerecords/144000/144898/BlackMarble_2016_3km.jpg' },
-    @{ Name = 'NASA_BlueMarble_TopoBathy.jpg'; Url = 'https://assets.science.nasa.gov/content/dam/science/esd/eo/images/bmng/bmng-topography-bathymetry/december/world.topo.bathy.200412.3x21600x10800.jpg' }
+    @{ Name = 'NASA_BlueMarble_TopoBathy.jpg'; Url = 'https://assets.science.nasa.gov/content/dam/science/esd/eo/images/bmng/bmng-topography-bathymetry/december/world.topo.bathy.200412.3x21600x10800.jpg' },
+    @{ Name = 'NASA_WISE_AllSky_MilkyWay_4096.jpg'; Url = 'https://sos.noaa.gov/ftp_mirror/astronomy/allsky_wise/mosaic/4096.jpg' }
 )
 
 foreach ($Source in $Sources) {
     $Path = Join-Path $Stage $Source.Name
     Invoke-WebRequest -Uri $Source.Url -OutFile $Path
-    Write-Host ("Downloaded {0} ({1:N1} MB)" -f $Source.Name, ((Get-Item -LiteralPath $Path).Length / 1MB))
+    $Info = Get-Item -LiteralPath $Path
+    if ($Info.Length -le 500000) { throw "Downloaded source is unexpectedly small: $($Source.Name)" }
+    Write-Host ("Downloaded {0} ({1:N1} MB)" -f $Source.Name, ($Info.Length / 1MB))
 }
 
 # NASA's original Blue Marble Clouds file is hosted on the legacy eoimages.gsfc.nasa.gov
