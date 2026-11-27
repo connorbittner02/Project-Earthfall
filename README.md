@@ -4,7 +4,7 @@ An Unreal Engine 5.8 prototype for an Earth-scale destruction sandbox.
 
 ## Current prototype
 
-- 128x256 spherical globe mesh using imported 8192x4096 NASA Blue Marble day, Black Marble night-lights, Blue Marble clouds, relief-derived normal, and starfield textures
+- 160x320 visual-only spherical globe mesh with a lightweight sphere aim-collision proxy using imported 8192x4096 NASA Blue Marble day, Black Marble night-lights, Blue Marble clouds, relief-derived normal, and starfield textures
 - Lit Earth material with a sun-driven day/night terminator, coastline city lights, ocean/land roughness, a blue Fresnel limb, and a dynamic impact-mask render target
 - Separate translucent cloud shell, atmosphere shell, and inverted starfield backdrop
 - 2048x1024 impact render target with cumulative scorch, cooling emissive heat, city-light blackout, and radial cloud clearing stamps

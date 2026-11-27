@@ -12,6 +12,7 @@
 #include "Materials/MaterialInterface.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "Misc/DateTime.h"
 #include "UObject/ConstructorHelpers.h"
 
 AEarthfallGameMode::AEarthfallGameMode()
@@ -30,13 +31,22 @@ void AEarthfallGameMode::BeginPlay()
     const FTransform PlanetTransform(FRotator::ZeroRotator, FVector::ZeroVector, FVector::OneVector);
     GetWorld()->SpawnActor<AEarthfallPlanet>(AEarthfallPlanet::StaticClass(), PlanetTransform, Params);
 
-    // Aim the sun toward the initial camera-facing hemisphere so the opening
-    // view presents the day map instead of the dark-side city-light layer.
-    const FVector LightDirection(1.0f, -0.35f, -0.7f);
+    // Use UTC to place the subsolar point on the correct longitude and season.
+    const FDateTime UtcNow = FDateTime::UtcNow();
+    const double DayPhase = 2.0 * PI * (static_cast<double>(UtcNow.GetDayOfYear()) - 81.0) / 365.2422;
+    const double Declination = FMath::DegreesToRadians(23.44) * FMath::Sin(DayPhase);
+    const double UtcHours = UtcNow.GetHour() + UtcNow.GetMinute() / 60.0 + UtcNow.GetSecond() / 3600.0;
+    const double HourAngle = FMath::DegreesToRadians((UtcHours - 12.0) * 15.0);
+    const FVector ToSun(
+        FMath::Cos(Declination) * FMath::Cos(HourAngle),
+        -FMath::Cos(Declination) * FMath::Sin(HourAngle),
+        FMath::Sin(Declination));
     ADirectionalLight* Sun = GetWorld()->SpawnActor<ADirectionalLight>(
-        LightDirection.Rotation().Vector() * -1000.0f, LightDirection.Rotation(), Params);
+        ToSun * 1000.0f, (-ToSun).Rotation(), Params);
     if (Sun)
     {
+        Sun->Tags.Add(FName(TEXT("EarthfallSun")));
+        Sun->GetLightComponent()->SetMobility(EComponentMobility::Movable);
         Sun->GetLightComponent()->SetIntensity(3.2f);
     }
     ASkyLight* Fill = GetWorld()->SpawnActor<ASkyLight>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
@@ -50,6 +60,19 @@ void AEarthfallGameMode::BeginPlay()
 
     UStaticMesh* Sphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
     UMaterialInterface* SpaceMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Earth/Materials/M_SpaceSky.M_SpaceSky"));
+    UMaterialInterface* SunMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Earth/Materials/M_EarthSun.M_EarthSun"));
+    if (Sphere && SunMaterial)
+    {
+        UStaticMeshComponent* SunDisc = NewObject<UStaticMeshComponent>(this, TEXT("EarthfallVisibleSun"));
+        SunDisc->SetStaticMesh(Sphere);
+        SunDisc->SetMaterial(0, SunMaterial);
+        SunDisc->SetWorldLocation(ToSun * 2500.0f);
+        SunDisc->SetWorldScale3D(FVector(0.24f));
+        SunDisc->SetMobility(EComponentMobility::Movable);
+        SunDisc->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        SunDisc->SetCastShadow(false);
+        SunDisc->RegisterComponentWithWorld(GetWorld());
+    }
     if (Sphere && SpaceMaterial)
     {
         UStaticMeshComponent* Sky = NewObject<UStaticMeshComponent>(this, TEXT("EarthfallSpaceBackdrop"));

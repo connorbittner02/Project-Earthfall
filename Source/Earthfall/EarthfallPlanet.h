@@ -4,6 +4,7 @@
 #include "GameFramework/Actor.h"
 #include "ProceduralMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/SphereComponent.h"
 #include "EarthfallPlanet.generated.h"
 
 UCLASS()
@@ -26,11 +27,13 @@ public:
     float PlanetRadius = 100.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Earthfall|Planet")
-    float RotationDegreesPerSecond = 1.5f;
+    float RotationDegreesPerSecond = 0.0f;
 
 private:
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<class UProceduralMeshComponent> PlanetMesh;
+    UPROPERTY(VisibleAnywhere)
+    TObjectPtr<class USphereComponent> AimCollisionProxy;
 
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<USceneComponent> Root;

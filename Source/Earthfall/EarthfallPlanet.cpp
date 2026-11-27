@@ -15,8 +15,8 @@
 
 namespace
 {
-constexpr int32 LatitudeSegments = 128;
-constexpr int32 LongitudeSegments = 256;
+constexpr int32 LatitudeSegments = 160;
+constexpr int32 LongitudeSegments = 320;
 constexpr int32 ImpactMaskWidth = 2048;
 constexpr int32 ImpactMaskHeight = 1024;
 constexpr int32 ImpactStampSize = 128;
@@ -29,9 +29,15 @@ AEarthfallPlanet::AEarthfallPlanet()
     SetRootComponent(Root);
     PlanetMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("Planet"));
     PlanetMesh->SetupAttachment(Root);
-    PlanetMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-    PlanetMesh->SetCollisionObjectType(ECC_WorldStatic);
-    PlanetMesh->bUseAsyncCooking = true;
+    PlanetMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    AimCollisionProxy = CreateDefaultSubobject<USphereComponent>(TEXT("AimCollisionProxy"));
+    AimCollisionProxy->SetupAttachment(Root);
+    AimCollisionProxy->SetSphereRadius(PlanetRadius);
+    AimCollisionProxy->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+    AimCollisionProxy->SetCollisionObjectType(ECC_WorldStatic);
+    AimCollisionProxy->SetCollisionResponseToAllChannels(ECR_Ignore);
+    AimCollisionProxy->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+    AimCollisionProxy->SetGenerateOverlapEvents(false);
     static ConstructorHelpers::FObjectFinder<UMaterialInterface> SurfaceMaterial(
         TEXT("/Game/Earth/Materials/M_EarthPhotoreal.M_EarthPhotoreal"));
     SurfaceMaterialInstance = SurfaceMaterial.Succeeded()
@@ -108,14 +114,17 @@ void AEarthfallPlanet::BuildPlanetMesh()
         {
             const int32 A = Lat * (LongitudeSegments + 1) + Lon;
             const int32 B = A + LongitudeSegments + 1;
-            Triangles.Append({A, B, A + 1, A + 1, B, B + 1});
+            if (Lat > 0) Triangles.Append({A, B, A + 1});
+            if (Lat < LatitudeSegments - 1) Triangles.Append({A + 1, B, B + 1});
         }
     }
 
     DeformedVertices = BaseVertices;
     Normals.SetNumUninitialized(DeformedVertices.Num());
     for (int32 i = 0; i < DeformedVertices.Num(); ++i) Normals[i] = DeformedVertices[i].GetSafeNormal();
-    PlanetMesh->CreateMeshSection_LinearColor(0, DeformedVertices, Triangles, Normals, UVs, VertexColors, Tangents, true);
+    // The high-density render mesh is visual-only; the lightweight sphere proxy
+    // owns all aim traces, avoiding a Chaos recook after every crater update.
+    PlanetMesh->CreateMeshSection_LinearColor(0, DeformedVertices, Triangles, Normals, UVs, VertexColors, Tangents, false);
     RefreshSurfaceVertexColors();
     PlanetMesh->UpdateMeshSection_LinearColor(0, DeformedVertices, Normals, UVs, VertexColors, Tangents);
 }
@@ -257,13 +266,23 @@ void AEarthfallPlanet::UpdateImpactMask(float DeltaSeconds, bool bAdvanceAge)
 void AEarthfallPlanet::UpdateSunDirection()
 {
     if (!SurfaceMaterialInstance || !GetWorld()) return;
+    const FDateTime UtcNow = FDateTime::UtcNow();
+    const double DayPhase = 2.0 * PI * (static_cast<double>(UtcNow.GetDayOfYear()) - 81.0) / 365.2422;
+    const double Declination = FMath::DegreesToRadians(23.44) * FMath::Sin(DayPhase);
+    const double UtcHours = UtcNow.GetHour() + UtcNow.GetMinute() / 60.0 + UtcNow.GetSecond() / 3600.0;
+    const double HourAngle = FMath::DegreesToRadians((UtcHours - 12.0) * 15.0);
+    const FVector ToSun(
+        FMath::Cos(Declination) * FMath::Cos(HourAngle),
+        -FMath::Cos(Declination) * FMath::Sin(HourAngle),
+        FMath::Sin(Declination));
     for (TActorIterator<ADirectionalLight> It(GetWorld()); It; ++It)
     {
-        const FVector ToSun = -It->GetActorForwardVector().GetSafeNormal();
-        SurfaceMaterialInstance->SetVectorParameterValue(
-            TEXT("SunDirection"), FLinearColor(ToSun.X, ToSun.Y, ToSun.Z, 0.0f));
+        if (!It->ActorHasTag(FName(TEXT("EarthfallSun")))) continue;
+        It->SetActorRotation((-ToSun).Rotation());
         break;
     }
+    SurfaceMaterialInstance->SetVectorParameterValue(
+        TEXT("SunDirection"), FLinearColor(ToSun.X, ToSun.Y, ToSun.Z, 0.0f));
 }
 
 void AEarthfallPlanet::RefreshSurfaceVertexColors()
