@@ -78,8 +78,20 @@ float4 Main(float3 RelPos, float3 CamPos,
         x = pow(deposit, 0.7) * 0.35;            col = lerp(col, float3(0.25, 0.20, 0.16), x); a = a + x - a * x;
         x = saturate(Fire.g * 0.92) * 0.80;      col = lerp(col, float3(0.035, 0.030, 0.028), x); a = a + x - a * x;
         // Inundated ground: dark, wet mud and standing water, not foam.
-        float wet = smoothstep(0.12, 0.60, flood) * 0.55;
-        x = wet;                                 col = lerp(col, float3(0.040, 0.036, 0.032), x); a = a + x - a * x;
+        // The flood mask is about 39 km per texel and its coast sits inland of the
+        // streamed one, so the wet band is widened by taking the strongest of five
+        // taps a texel and a half apart; that carries it down to the real shore.
+        // (Deciding it from the tiles' own height was tried and backed out: coarse
+        // distant tiles sag below sea level and flooded whole hill ranges.)
+        float2 floodTexel = float2(1.5 / 1024.0, 1.5 / 512.0);
+        float floodNear = max(max(Texture2DSampleLevel(WaveTex, WaveTexSampler, uv + float2(floodTexel.x, 0.0), 0).b,
+                                  Texture2DSampleLevel(WaveTex, WaveTexSampler, uv - float2(floodTexel.x, 0.0), 0).b),
+                              max(Texture2DSampleLevel(WaveTex, WaveTexSampler, uv + float2(0.0, floodTexel.y), 0).b,
+                                  Texture2DSampleLevel(WaveTex, WaveTexSampler, uv - float2(0.0, floodTexel.y), 0).b));
+        floodNear = saturate(max(floodNear, Wave.b) * 3.0);
+        // Only land floods; the open sea keeps its own shading.
+        float wet = smoothstep(0.04, 0.35, floodNear) * 0.80 * (1.0 - water);
+        x = wet;                                 col = lerp(col, float3(0.034, 0.036, 0.038), x); a = a + x - a * x;
         x = scorch * 0.94;                       col = lerp(col, float3(0.020, 0.017, 0.015), x); a = a + x - a * x;
         x = saturate(crater.g * 1.3) * 0.40;     col = lerp(col, float3(0.22, 0.19, 0.16), x); a = a + x - a * x;
         x = crater.r * 0.45;                     col = lerp(col, float3(0.015, 0.013, 0.012), x); a = a + x - a * x;

@@ -97,9 +97,12 @@ done in the decal, not in Cesium's tileset material, which stays stock.
 
 ## Known limits
 
-- Flooding is now subtle on streamed terrain: in `30-tsunami-terrain-coast` the coast shows
-  a thin foam line at the shore but little visibly inundated ground. The flood mask is
-  about 39 km per texel and does not line up with the streamed coastline.
+- Flooding on streamed terrain is a wide dark wet band, widened from the 39 km flood
+  mask to reach the real shore. It does not follow relief: hills inside the band are
+  darkened like valleys. Deciding it from the tiles' own height was tried and backed out,
+  because coarse distant tiles sag below sea level and flooded whole hill ranges.
+- A thin tan band can show at the far horizon of a flooded coast, where damp ground
+  still catches the warm sky at a grazing angle.
 - The ember glow under the ash cap is too faint to see in the capture.
 - The plume, crown and column are shaded meshes, not volumetric simulations. Up close the
   crown is a translucent curtain and the column a noise-eroded cylinder and cap.
