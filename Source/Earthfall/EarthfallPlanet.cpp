@@ -121,6 +121,7 @@ void AEarthfallPlanet::ResetPlanet()
 void AEarthfallPlanet::ApplyImpact(FVector WorldLocation, float Radius, float Energy, int32 WeaponIndex)
 {
     const FVector LocalDirection = GetActorTransform().InverseTransformVectorNoScale(WorldLocation - GetActorLocation()).GetSafeNormal();
+    const FVector WorldNormal = GetActorTransform().TransformVectorNoScale(LocalDirection).GetSafeNormal();
     const FVector SurfacePoint = WorldLocation;
     const float SafeRadius = FMath::Clamp(Radius, 2.0f, PlanetRadius * 0.45f);
     const float Depth = FMath::Clamp(Energy * 0.12f, 2.0f, PlanetRadius * 0.2f);
@@ -179,7 +180,7 @@ void AEarthfallPlanet::ApplyImpact(FVector WorldLocation, float Radius, float En
     FActorSpawnParameters Params;
     Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
     AEarthImpactFeedback* Feedback = GetWorld()->SpawnActor<AEarthImpactFeedback>(
-        AEarthImpactFeedback::StaticClass(), SurfacePoint, FRotationMatrix::MakeFromZ(LocalDirection).Rotator(), Params);
+        AEarthImpactFeedback::StaticClass(), SurfacePoint, FRotationMatrix::MakeFromZ(WorldNormal).Rotator(), Params);
     if (Feedback)
     {
         static const FLinearColor Colors[] = {
