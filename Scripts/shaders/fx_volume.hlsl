@@ -18,8 +18,18 @@ float4 Main(float3 NormalWS, float3 CamVec, float3 LocalPos, float3 Sun, float T
     float fine = VNoise(q * 3.1 + 7.0);
     float noise = saturate(billow * 1.5 - 0.20 + (fine - 0.5) * 0.35);
 
-    float density = saturate(core * (0.55 + 0.75 * noise * Shape.y) - (1.0 - noise) * 0.30 * Shape.y);
-    density = smoothstep(0.0, 0.55, density);
+    // Pyroclastic edge: a second, finer field carves lobes into the silhouette,
+    // and the erosion bites hardest where the view ray only grazes the mesh, so
+    // the outline breaks into billows instead of following the cylinder or sphere.
+    float lobes = Fbm(q * 2.3 + float3(11.0, 5.0, 0.0), 3);
+    float grazing = 1.0 - mu;
+    float density = core * (0.40 + 0.95 * noise * Shape.y)
+                  - (1.0 - noise) * 0.30 * Shape.y
+                  - (1.0 - lobes) * grazing * grazing * 0.85 * Shape.y;
+    density = smoothstep(0.04, 0.60, saturate(density));
+    // A fast-scrolling part is a stem (a cylinder, 100 units tall): fade its two
+    // flat ends so they never show through the cap or sit on the ground as a disc.
+    density *= lerp(1.0, smoothstep(50.0, 34.0, abs(LocalPos.z)), saturate(Shape.w * 2.0 - 0.6));
 
     float wrap = saturate(dot(N, normalize(Sun)) * 0.55 + 0.45);
     float light = (0.30 + 0.85 * wrap) * (0.60 + 0.55 * noise);

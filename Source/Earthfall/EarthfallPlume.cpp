@@ -25,7 +25,7 @@ AEarthfallPlume::AEarthfallPlume()
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cylinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> Sphere(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Spray(TEXT("/Game/Earthfall/Materials/M_FXTrail.M_FXTrail"));
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Spray(TEXT("/Game/Earthfall/Materials/M_FXSpray.M_FXSpray"));
 	SprayMaterial = Spray.Succeeded() ? Spray.Object : nullptr;
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Volume(TEXT("/Game/Earthfall/Materials/M_FXVolume.M_FXVolume"));
 	VolumeMaterial = Volume.Succeeded() ? Volume.Object : nullptr;
@@ -81,15 +81,15 @@ void AEarthfallPlume::InitPlume(const FEarthfallPlumeParams& InParams)
 		Part->SetVisibility(true);
 		return MID;
 	};
-	StemMID = MakeMID(Stem, FLinearColor(1.1f, 1.0f, 5.0f, 0.55f));
-	SkirtMID = MakeMID(Skirt, FLinearColor(1.5f, 1.0f, 3.5f, 0.12f));
-	CapMID = MakeMID(Cap, FLinearColor(1.3f, 1.0f, 3.0f, 0.10f));
+	StemMID = MakeMID(Stem, FLinearColor(2.1f, 1.7f, 5.0f, 0.80f));
+	SkirtMID = MakeMID(Skirt, FLinearColor(2.3f, 1.6f, 3.5f, 0.12f));
+	CapMID = MakeMID(Cap, FLinearColor(2.0f, 1.7f, 3.0f, 0.10f));
 	if (Params.bOcean && SprayMaterial)
 	{
 		BuildCrownMesh();
-		// Shape = (falloff exponent, hot-core boost): a soft sheet, brightest mid-height.
+		// Shape = (taper exponent toward the top, streak contrast).
 		CrownMID = UMaterialInstanceDynamic::Create(SprayMaterial, this);
-		CrownMID->SetVectorParameterValue(TEXT("Shape"), FLinearColor(0.9f, 0.35f, 0.0f, 0.0f));
+		CrownMID->SetVectorParameterValue(TEXT("Shape"), FLinearColor(1.4f, 0.6f, 0.0f, 0.0f));
 		Crown->SetMaterial(0, CrownMID);
 		Crown->SetVisibility(true);
 	}
@@ -125,8 +125,8 @@ void AEarthfallPlume::UpdateShape()
 	};
 
 	// Stem: a slightly sunken cylinder from the ground to the column top.
-	Stem->SetRelativeLocation(FVector(0.0f, 0.0f, Height * 0.5f - 0.1f));
-	Stem->SetRelativeScale3D(FVector(Girth / ShapeHalfExtent, Girth / ShapeHalfExtent, (Height + 0.2f) / (2.0f * ShapeHalfExtent)));
+	Stem->SetRelativeLocation(FVector(0.0f, 0.0f, Height * 0.5f));
+	Stem->SetRelativeScale3D(FVector(Girth / ShapeHalfExtent, Girth / ShapeHalfExtent, Height * 1.30f / (2.0f * ShapeHalfExtent)));
 	if (StemMID) StemMID->SetVectorParameterValue(TEXT("Tint"), Tint(0.95f * Fade));
 
 	// Skirt: where the column punches through the cloud decks it spreads sideways.
@@ -134,8 +134,8 @@ void AEarthfallPlume::UpdateShape()
 	const float SkirtGrow = FMath::SmoothStep(SkirtAltitude * 0.8f, SkirtAltitude * 2.2f, Height);
 	const float SkirtRadius = Girth * (1.6f + 1.6f * SkirtGrow);
 	Skirt->SetRelativeLocation(FVector(0.0f, 0.0f, FMath::Min(SkirtAltitude, Height)));
-	Skirt->SetRelativeScale3D(FVector(SkirtRadius / ShapeHalfExtent, SkirtRadius / ShapeHalfExtent, Girth * 0.55f / ShapeHalfExtent));
-	if (SkirtMID) SkirtMID->SetVectorParameterValue(TEXT("Tint"), Tint(0.80f * Fade * SkirtGrow));
+	Skirt->SetRelativeScale3D(FVector(SkirtRadius / ShapeHalfExtent, SkirtRadius / ShapeHalfExtent, Girth * 0.95f / ShapeHalfExtent));
+	if (SkirtMID) SkirtMID->SetVectorParameterValue(TEXT("Tint"), Tint(0.50f * Fade * SkirtGrow));
 
 	// Cap: rides the top of the stem and keeps spreading after the rise stops.
 	const float Spread = FMath::Clamp(Age / (RiseSeconds * 4.0f), 0.0f, 1.0f);
@@ -157,7 +157,7 @@ void AEarthfallPlume::UpdateShape()
 		Crown->SetRelativeScale3D(FVector(CrownRadius, CrownRadius, FMath::Max(CrownHeight, 0.02f)));
 		// Additive spray: Tint.a is the HDR level.
 		CrownMID->SetVectorParameterValue(TEXT("Tint"),
-			FLinearColor(SprayColor.R, SprayColor.G, SprayColor.B, 1.9f * Day * (1.0f - Collapse)));
+			FLinearColor(SprayColor.R, SprayColor.G, SprayColor.B, 1.5f * Day * (1.0f - Collapse)));
 		Crown->SetVisibility(Collapse < 0.999f);
 	}
 }
@@ -197,7 +197,7 @@ void AEarthfallPlume::BuildCrownMesh()
 			for (int32 End = 0; End < 2; ++End)
 			{
 				Normals.Add(Outward);
-				UVs.Add(FVector2D(static_cast<float>(Segment) / Segments, End == 0 ? 0.12f : 1.0f));
+				UVs.Add(FVector2D(static_cast<float>(Segment) / Segments, End == 0 ? 0.0f : 1.0f));
 				Colors.Add(FLinearColor(1.0f, 1.0f, 1.0f, Fade));
 				Tangents.Add(FProcMeshTangent(-Outward.Y, Outward.X, 0.0f));
 			}

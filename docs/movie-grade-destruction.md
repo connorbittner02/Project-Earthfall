@@ -34,11 +34,14 @@ Strikes that displace under 0.05 km3 raise no tsunami.
 
 `AEarthfallPlume` is the tall, slow part of an impact.
 
-- Ocean: a two-layer spray crown (a procedural flaring curtain, additive) to about 1.035 R
+- Ocean: a two-layer spray crown (a procedural flaring curtain shaded by `M_FXSpray`:
+  rising streak noise erodes it and it thins to nothing at the top and outer rim) to about 1.035 R
   and a steam column with a skirt and cap to 1.06 R.
 - Land: an ash stem to 1.08 R, a skirt where it punches through the cloud decks, and a
   mushroom cap that keeps spreading. `M_FXVolume` (`fx_volume.hlsl`) shades the meshes as
   billowing volumes: dense through the middle, nothing at the silhouette, noise-eroded.
+  A second noise field bites hardest at grazing angles, so the outline breaks into
+  billows, and the stem's flat ends fade out so it merges into the cap.
 
 The column's shadow is analytic. Each shock slot carries the column height in `C.w`, and
 `ColumnShadow()` in `common.hlsl` darkens the ground and both cloud decks down-sun of it.
@@ -48,7 +51,8 @@ The terrain decal applies the same shadow to streamed tiles.
 
 `AEarthfallEjecta` throws up to 2,600 fragments per strike (6,000 alive at once) in a
 45-75 degree cone. Each one is integrated under inverse-square gravity toward the planet's
-centre, so the curtain climbs to about 1.25 R, hangs, and falls back. Falling fragments
+centre, so the curtain climbs to about 1.25 R, hangs, and falls back. Fragments are thin
+magma-amber shards with long tails, sized to stay readable from orbit. Falling fragments
 below 1.07 R turn into bright streaks. About 1.5% are major fragments: where they land
 `SeedSecondaryImpact()` raises a dust plume in `AshPlumeRT` and, on land, lights a fire in
 `FireMaskRT`.

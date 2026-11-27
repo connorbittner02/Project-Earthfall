@@ -601,6 +601,7 @@ def main():
     build_fx_volume()
     build_fx("M_FXTrail", 1, (1.6, 1.2, 0.0, 0.0), two_sided=True)
     build_fx("M_FXRing", 2, (3.0, 1.6, 0.0, 0.0), two_sided=True)
+    build_fx("M_FXSpray", 3, (1.4, 0.6, 0.0, 0.0), two_sided=True)
     build_projectile_body()
     build_niagara_templates()
     remove_obsolete_assets()

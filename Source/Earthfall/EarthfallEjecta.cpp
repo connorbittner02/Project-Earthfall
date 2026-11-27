@@ -67,12 +67,13 @@ void AEarthfallEjecta::BeginPlay()
 	{
 		// Shape = (falloff exponent, hot-core boost, noise scale, turbulence), as in fx.hlsl.
 		RockMID = UMaterialInstanceDynamic::Create(EjectaMaterial, this);
-		RockMID->SetVectorParameterValue(TEXT("Tint"), FLinearColor(1.0f, 0.34f, 0.07f, 4.0f));
-		RockMID->SetVectorParameterValue(TEXT("Shape"), FLinearColor(1.6f, 1.2f, 2.0f, 0.0f));
+		// Magma orange-amber, kept under the level where bloom washes it to white.
+		RockMID->SetVectorParameterValue(TEXT("Tint"), FLinearColor(1.0f, 0.42f, 0.08f, 2.3f));
+		RockMID->SetVectorParameterValue(TEXT("Shape"), FLinearColor(3.0f, 0.7f, 2.0f, 0.0f));
 		Rocks->SetMaterial(0, RockMID);
 		StreakMID = UMaterialInstanceDynamic::Create(EjectaMaterial, this);
-		StreakMID->SetVectorParameterValue(TEXT("Tint"), FLinearColor(1.0f, 0.78f, 0.42f, 9.0f));
-		StreakMID->SetVectorParameterValue(TEXT("Shape"), FLinearColor(1.4f, 2.0f, 2.0f, 0.0f));
+		StreakMID->SetVectorParameterValue(TEXT("Tint"), FLinearColor(1.0f, 0.50f, 0.12f, 4.2f));
+		StreakMID->SetVectorParameterValue(TEXT("Shape"), FLinearColor(3.4f, 1.1f, 2.0f, 0.0f));
 		Streaks->SetMaterial(0, StreakMID);
 	}
 }
@@ -194,14 +195,14 @@ void AEarthfallEjecta::Tick(float DeltaSeconds)
 		const float Cooling = FMath::Max(FMath::Exp(-Fragment.Age / CoolSeconds), 0.18f);
 
 		const float Apparent = FMath::Clamp(static_cast<float>(FVector::Dist(Fragment.Position, Eye)) / 110.0f, 0.45f, 4.5f);
-		const float RockRadius = 0.075f * Apparent * Fragment.Size * Cooling * (1.0f - Reentry);
+		const float RockRadius = 0.030f * Apparent * Fragment.Size * Cooling * (1.0f - Reentry);
 		RockTransforms[Index] = RockRadius > 0.004f
-			? FTransform(Facing, Fragment.Position, FVector(RockRadius * (1.0f + Speed * 0.22f), RockRadius, RockRadius) / SphereRadius)
+			? FTransform(Facing, Fragment.Position, FVector(RockRadius * (2.5f + Speed * 0.75f), RockRadius, RockRadius) / SphereRadius)
 			: HiddenTransform;
 
 		if (Reentry > 0.02f)
 		{
-			const float StreakRadius = 0.055f * Apparent * Fragment.Size * Reentry;
+			const float StreakRadius = 0.022f * Apparent * Fragment.Size * Reentry;
 			const float StreakLength = (0.9f + Speed * 0.40f) * Reentry * Fragment.Size * FMath::Sqrt(Apparent);
 			// The streak trails behind the fragment.
 			StreakTransforms[Index] = FTransform(Facing, Fragment.Position - Heading * StreakLength * 0.5f,
