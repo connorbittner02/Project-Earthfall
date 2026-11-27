@@ -4,6 +4,7 @@
 #include "GameFramework/Pawn.h"
 #include "Camera/CameraComponent.h"
 #include "Components/PointLightComponent.h"
+#include "ProceduralMeshComponent.h"
 #include "EarthOrbitPawn.generated.h"
 
 UCLASS()
@@ -36,10 +37,13 @@ protected:
     void SelectWeapon3();
     void SelectWeapon4();
     void SelectWeapon5();
+    void SelectWeapon6();
     void ResetSimulation();
     void SelectWeapon(int32 Index);
     void UpdateAimState();
     void TriggerImpactShake();
+    void BuildTargetPreviewRing();
+    void UpdateTargetPreviewRing();
 
 private:
     UPROPERTY(VisibleAnywhere)
@@ -50,6 +54,9 @@ private:
 
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<UPointLightComponent> PlanetFillLight;
+
+    UPROPERTY(VisibleAnywhere)
+    TObjectPtr<UProceduralMeshComponent> TargetPreviewRing;
 
     float Yaw = 0.0f;
     float Pitch = -10.0f;

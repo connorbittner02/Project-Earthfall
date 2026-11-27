@@ -23,12 +23,12 @@ AEarthImpactFeedback::AEarthImpactFeedback()
     Flash->SetLightColor(FLinearColor(1.0f, 0.22f, 0.04f));
     Flash->SetCastShadows(false);
 
+    static ConstructorHelpers::FObjectFinder<UMaterialInterface> RingMaterialAsset(
+        TEXT("/Game/Earthfall/Materials/M_EarthfallShockwave.M_EarthfallShockwave"));
     Ring = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("ShockwaveRing"));
     Ring->SetupAttachment(Scene);
     Ring->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     Ring->SetGenerateOverlapEvents(false);
-    static ConstructorHelpers::FObjectFinder<UMaterialInterface> RingMaterialAsset(
-        TEXT("/Game/Earthfall/Materials/M_EarthfallShockwave.M_EarthfallShockwave"));
     if (RingMaterialAsset.Succeeded())
     {
         RingMaterial = UMaterialInstanceDynamic::Create(RingMaterialAsset.Object, this);
@@ -41,6 +41,12 @@ AEarthImpactFeedback::AEarthImpactFeedback()
     OrbitalBeam->SetVisibility(false);
     static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderMesh(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
     if (CylinderMesh.Succeeded()) OrbitalBeam->SetStaticMesh(CylinderMesh.Object);
+    ThermalPlume = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ThermalPlume"));
+    ThermalPlume->SetupAttachment(Scene);
+    ThermalPlume->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    ThermalPlume->SetVisibility(false);
+    static ConstructorHelpers::FObjectFinder<UStaticMesh> PlumeMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+    if (PlumeMesh.Succeeded()) ThermalPlume->SetStaticMesh(PlumeMesh.Object);
     if (RingMaterial) RingMaterial->SetVectorParameterValue(TEXT("GlowColor"), AccentColor);
     if (RingMaterialAsset.Succeeded())
     {
@@ -51,18 +57,38 @@ AEarthImpactFeedback::AEarthImpactFeedback()
     SetLifeSpan(Lifetime);
 }
 
-void AEarthImpactFeedback::InitFeedback(float ImpactRadius, FLinearColor InAccentColor, float InLifetime, bool bShowBeam, float FlashIntensity, bool bInImplosion)
+void AEarthImpactFeedback::InitFeedback(float ImpactRadius, FLinearColor InAccentColor, float InLifetime, bool bShowBeam, float FlashIntensity, bool bInImplosion, bool bInNuclear)
 {
     AccentColor = InAccentColor;
     Lifetime = FMath::Max(0.1f, InLifetime);
     PeakFlashIntensity = FlashIntensity;
+    ExpansionRate = 1.0f;
     ExpansionRadius = ImpactRadius * 3.2f;
     Age = 0.0f;
     bImplosion = bInImplosion;
+    bNuclear = bInNuclear;
+    if (bNuclear)
+    {
+        ExpansionRadius = ImpactRadius * 13.0f;
+        ExpansionRate = 1.0f;
+        AccentColor = FLinearColor(1.0f, 0.36f, 0.08f);
+    }
     SetLifeSpan(Lifetime);
     Flash->SetLightColor(AccentColor);
     Flash->SetIntensity(FlashIntensity);
     if (RingMaterial) RingMaterial->SetVectorParameterValue(TEXT("GlowColor"), AccentColor);
+    if (bNuclear) Flash->SetAttenuationRadius(1700.0f);
+    if (bNuclear)
+    {
+        ThermalPlume->SetVisibility(true);
+        ThermalPlume->SetRelativeLocation(FVector(0.0f, 0.0f, 14.0f));
+        ThermalPlume->SetRelativeScale3D(FVector(0.22f, 0.22f, 0.34f));
+        if (BeamMaterial)
+        {
+            BeamMaterial->SetVectorParameterValue(TEXT("GlowColor"), FLinearColor(1.0f, 0.24f, 0.035f));
+            ThermalPlume->SetMaterial(0, BeamMaterial);
+        }
+    }
     if (bShowBeam)
     {
         OrbitalBeam->SetVisibility(true);
@@ -78,11 +104,23 @@ void AEarthImpactFeedback::Tick(float DeltaSeconds)
     Age += DeltaSeconds;
     const float Alpha = FMath::Clamp(Age / Lifetime, 0.0f, 1.0f);
     const float Fade = 1.0f - Alpha;
-    const float RadiusScale = FMath::Lerp(0.035f, ExpansionRadius / 90.0f, bImplosion ? 1.0f - Alpha : Alpha);
+    const float WaveAlpha = FMath::Clamp(Alpha / ExpansionRate, 0.0f, 1.0f);
+    const float RadiusScale = FMath::Lerp(0.035f, ExpansionRadius / 90.0f, bImplosion ? 1.0f - WaveAlpha : WaveAlpha);
     Ring->SetRelativeScale3D(FVector(RadiusScale));
     if (RingMaterial) RingMaterial->SetScalarParameterValue(TEXT("Opacity"), Fade);
-    Flash->SetIntensity(FMath::Lerp(PeakFlashIntensity, 0.0f, Alpha));
+    const float FlashEnvelope = bNuclear
+        ? (Alpha < 0.12f ? 1.0f : (Alpha < 0.22f ? 0.08f : FMath::Clamp(1.0f - (Alpha - 0.22f) / 0.78f, 0.0f, 1.0f)))
+        : 1.0f - Alpha;
+    Flash->SetIntensity(PeakFlashIntensity * FlashEnvelope);
+    if (bNuclear) Flash->SetLightColor(Alpha < 0.22f ? FLinearColor(0.72f, 0.88f, 1.0f) : FLinearColor(1.0f, 0.34f, 0.08f));
     if (OrbitalBeam->IsVisible() && BeamMaterial) BeamMaterial->SetScalarParameterValue(TEXT("Opacity"), Fade * 0.8f);
+    if (bNuclear && ThermalPlume)
+    {
+        const float Growth = FMath::Lerp(0.22f, 0.95f, FMath::Clamp(Alpha * 1.5f, 0.0f, 1.0f));
+        ThermalPlume->SetRelativeLocation(FVector(0.0f, 0.0f, 14.0f + 42.0f * Alpha));
+        ThermalPlume->SetRelativeScale3D(FVector(Growth, Growth, Growth * 1.35f));
+        if (BeamMaterial) BeamMaterial->SetScalarParameterValue(TEXT("Opacity"), Fade * 0.9f);
+    }
 }
 
 void AEarthImpactFeedback::BuildRing()

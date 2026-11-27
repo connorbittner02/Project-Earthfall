@@ -28,18 +28,18 @@ void AEarthfallHUD::DrawHUD()
     const FLinearColor Orange(1.0f, 0.36f, 0.12f, 1.0f);
     DrawTextLine(TEXT("E A R T H F A L L"), 38.0f, 28.0f, 2.0f, Cyan);
     DrawTextLine(TEXT("ORBITAL STRIKE SIMULATOR  //  PROTOTYPE 01"), 40.0f, 66.0f, 1.2f, White);
-    DrawTextLine(TEXT("RMB DRAG ORBIT   WHEEL ZOOM   LMB STRIKE   1-5 WEAPONS   R RESET"), 40.0f, H - 102.0f, 1.0f, White);
+    DrawTextLine(TEXT("RMB DRAG ORBIT   WHEEL ZOOM   LMB STRIKE   1-6 WEAPONS   R RESET"), 40.0f, H - 102.0f, 1.0f, White);
 
     const AEarthOrbitPawn* Pawn = Cast<AEarthOrbitPawn>(PlayerOwner ? PlayerOwner->GetPawn() : nullptr);
     if (!Pawn) return;
-    static const TCHAR* Names[] = {TEXT("KINETIC ROD"), TEXT("PLASMA LANCE"), TEXT("MANTLE CHARGE"), TEXT("MICRO BLACK HOLE"), TEXT("CRYO IMPACTOR")};
-    static const TCHAR* Yields[] = {TEXT("TIGHT / FAST"), TEXT("BEAM / STEAM"), TEXT("SEISMIC / DEEP"), TEXT("INWARD / GRAVITY"), TEXT("FROST / CLIMATE")};
+    static const TCHAR* Names[] = {TEXT("KINETIC ROD"), TEXT("PLASMA LANCE"), TEXT("MANTLE CHARGE"), TEXT("MICRO BLACK HOLE"), TEXT("CRYO IMPACTOR"), TEXT("THERMONUCLEAR")};
+    static const TCHAR* Yields[] = {TEXT("TIGHT / FAST"), TEXT("BEAM / STEAM"), TEXT("SEISMIC / DEEP"), TEXT("INWARD / GRAVITY"), TEXT("FROST / CLIMATE"), TEXT("FLASH / EMP / FALLOUT")};
     DrawTextLine(TEXT("ARSENAL"), W - 365.0f, 30.0f, 1.2f, White);
-    for (int32 i = 0; i < 5; ++i)
+    for (int32 i = 0; i < 6; ++i)
     {
         const float Y = 64.0f + i * 46.0f;
         const bool bSelected = Pawn->GetWeaponIndex() == i;
-        static const TCHAR* Keys[] = {TEXT("[1]"), TEXT("[2]"), TEXT("[3]"), TEXT("[4]"), TEXT("[5]")};
+        static const TCHAR* Keys[] = {TEXT("[1]"), TEXT("[2]"), TEXT("[3]"), TEXT("[4]"), TEXT("[5]"), TEXT("[6]")};
         const FString Row = FString::Printf(TEXT("%s  %s"), Keys[i], Names[i]);
         DrawTextLine(Row, W - 430.0f, Y, 1.05f, bSelected ? Orange : White);
         DrawTextLine(Yields[i], W - 240.0f, Y + 18.0f, 0.68f, Cyan);
@@ -53,7 +53,7 @@ void AEarthfallHUD::DrawHUD()
                 T.LivingPopulation / 1.e9, T.TotalCasualties / 1.e6, T.DisplacedPopulation / 1.e6), 40.0f, 106.0f, 1.0f, White);
             DrawTextLine(FString::Printf(TEXT("GRID BLACKOUT  %.1f%%   ATMOSPHERE  %.0f%%   MEAN TEMP  %.1f C   DEBRIS  %.1f"),
                 T.GridBlackoutPercent, T.AtmosphereHealth, T.MeanTemperatureC, T.DebrisMass), 40.0f, 132.0f, 0.92f, Cyan);
-            FCanvasTileItem NewsBackground(FVector2D(0.0f, H - 48.0f), FVector2D(W, 48.0f), FLinearColor(0.018f, 0.035f, 0.065f, 0.94f));
+        FCanvasTileItem NewsBackground(FVector2D(0.0f, H - 48.0f), FVector2D(W, 48.0f), FLinearColor(0.018f, 0.035f, 0.065f, 0.94f));
             NewsBackground.BlendMode = SE_BLEND_Translucent;
             Canvas->DrawItem(NewsBackground);
             FCanvasTileItem NewsAccent(FVector2D(0.0f, H - 48.0f), FVector2D(W, 2.0f), FLinearColor(1.0f, 0.23f, 0.08f, 1.0f));
@@ -73,7 +73,8 @@ void AEarthfallHUD::DrawHUD()
         FLinearColor(0.16f, 0.86f, 1.0f, 1.0f),
         FLinearColor(1.0f, 0.28f, 0.06f, 1.0f),
         FLinearColor(0.60f, 0.25f, 0.95f, 1.0f),
-        FLinearColor(0.48f, 0.88f, 1.0f, 1.0f)
+        FLinearColor(0.48f, 0.88f, 1.0f, 1.0f),
+        FLinearColor(0.9f, 0.95f, 1.0f, 1.0f)
     };
     const FLinearColor AimColor = Pawn->IsAimOnPlanet() ? WeaponColors[Pawn->GetWeaponIndex()] : White;
     DrawLine(CursorX - 10.0f, CursorY, CursorX - 3.0f, CursorY, AimColor, 2.0f);

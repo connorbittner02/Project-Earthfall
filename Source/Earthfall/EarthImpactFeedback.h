@@ -18,18 +18,22 @@ public:
     TObjectPtr<class UProceduralMeshComponent> Ring;
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<class UStaticMeshComponent> OrbitalBeam;
+    UPROPERTY(VisibleAnywhere)
+    TObjectPtr<class UStaticMeshComponent> ThermalPlume;
     float Age = 0.0f;
     float Lifetime = 1.1f;
     float PeakFlashIntensity = 22000.0f;
     float ExpansionRadius = 90.0f;
+    float ExpansionRate = 1.0f;
     FLinearColor AccentColor = FLinearColor(1.0f, 0.3f, 0.06f);
     bool bImplosion = false;
-    UPROPERTY()
-    TObjectPtr<class UMaterialInstanceDynamic> RingMaterial;
-    UPROPERTY()
-    TObjectPtr<class UMaterialInstanceDynamic> BeamMaterial;
-    void InitFeedback(float ImpactRadius, FLinearColor InAccentColor, float InLifetime, bool bShowBeam, float FlashIntensity, bool bInImplosion = false);
+    bool bNuclear = false;
+    void InitFeedback(float ImpactRadius, FLinearColor InAccentColor, float InLifetime, bool bShowBeam, float FlashIntensity, bool bInImplosion = false, bool bInNuclear = false);
     virtual void Tick(float DeltaSeconds) override;
 private:
     void BuildRing();
+    UPROPERTY(Transient)
+    TObjectPtr<class UMaterialInstanceDynamic> RingMaterial;
+    UPROPERTY(Transient)
+    TObjectPtr<class UMaterialInstanceDynamic> BeamMaterial;
 };

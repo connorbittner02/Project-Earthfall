@@ -4,15 +4,22 @@
 #include "ProceduralMeshComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Engine/TextureRenderTarget2D.h"
 #include "Engine/Texture2D.h"
+#include "Engine/Canvas.h"
+#include "Engine/DirectionalLight.h"
+#include "Components/DirectionalLightComponent.h"
+#include "EngineUtils.h"
+#include "Kismet/KismetRenderingLibrary.h"
 #include "UObject/ConstructorHelpers.h"
 
 namespace
 {
 constexpr int32 LatitudeSegments = 128;
 constexpr int32 LongitudeSegments = 256;
-constexpr int32 SurfaceTextureWidth = 2048;
-constexpr int32 SurfaceTextureHeight = 1024;
+constexpr int32 ImpactMaskWidth = 2048;
+constexpr int32 ImpactMaskHeight = 1024;
+constexpr int32 ImpactStampSize = 128;
 }
 
 AEarthfallPlanet::AEarthfallPlanet()
@@ -26,7 +33,7 @@ AEarthfallPlanet::AEarthfallPlanet()
     PlanetMesh->SetCollisionObjectType(ECC_WorldStatic);
     PlanetMesh->bUseAsyncCooking = true;
     static ConstructorHelpers::FObjectFinder<UMaterialInterface> SurfaceMaterial(
-        TEXT("/Game/Earthfall/Materials/M_EarthfallSurface.M_EarthfallSurface"));
+        TEXT("/Game/Earth/Materials/M_EarthPhotoreal.M_EarthPhotoreal"));
     SurfaceMaterialInstance = SurfaceMaterial.Succeeded()
         ? UMaterialInstanceDynamic::Create(SurfaceMaterial.Object, this) : nullptr;
     if (SurfaceMaterialInstance)
@@ -38,56 +45,30 @@ AEarthfallPlanet::AEarthfallPlanet()
 void AEarthfallPlanet::BeginPlay()
 {
     Super::BeginPlay();
+    BuildImpactMaskResources();
     BuildPlanetMesh();
     BuildAtmosphereAndCloudShells();
+    UpdateSunDirection();
+    UpdateImpactMask(0.0f, false);
 }
 
 void AEarthfallPlanet::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
     AddActorLocalRotation(FRotator(0.0f, RotationDegreesPerSecond * DeltaSeconds, 0.0f));
-    CloudUpdateAccumulator += DeltaSeconds;
-    if (CloudUpdateAccumulator >= 0.15f)
+    if (CloudLayer) CloudLayer->AddLocalRotation(FRotator(0.0f, 0.08f * DeltaSeconds, 0.0f));
+    SunDirectionUpdateAccumulator += DeltaSeconds;
+    if (SunDirectionUpdateAccumulator >= 1.0f)
     {
-        const float CloudStep = CloudUpdateAccumulator;
-        CloudUpdateAccumulator = 0.0f;
-        bool bCloudsRecovered = false;
-        for (int32 Index = 0; Index < CloudDensity.Num(); ++Index)
-        {
-            float& Density = CloudDensity[Index];
-            if (Density < BaseCloudDensity[Index])
-            {
-                Density = FMath::Min(BaseCloudDensity[Index], Density + CloudStep * 0.025f);
-                const float CloudCoverage = FMath::SmoothStep(0.42f, 0.62f, Density);
-                CloudVertices[Index] = BaseVertices[Index].GetSafeNormal() * PlanetRadius * FMath::Lerp(0.98f, 1.012f, CloudCoverage);
-                bCloudsRecovered = true;
-            }
-        }
-        if (bCloudsRecovered && CloudLayer && CloudColors.Num() == CloudDensity.Num())
-        {
-            for (int32 i = 0; i < CloudColors.Num(); ++i) CloudColors[i].A = CloudDensity[i] * 0.12f;
-            CloudLayer->UpdateMeshSection_LinearColor(0, CloudVertices, Normals, UVs, CloudColors, Tangents);
-        }
+        SunDirectionUpdateAccumulator = 0.0f;
+        UpdateSunDirection();
     }
-    HeatUpdateAccumulator += DeltaSeconds;
-    if (HeatUpdateAccumulator >= 0.1f)
+    ImpactMaskUpdateAccumulator += DeltaSeconds;
+    if (ImpactMaskUpdateAccumulator >= 0.2f)
     {
-        const float HeatStep = HeatUpdateAccumulator;
-        HeatUpdateAccumulator = 0.0f;
-        bool bHeatChanged = false;
-        for (int32 i = 0; i < HeatValues.Num(); ++i)
-        {
-            if (FMath::IsNearlyZero(HeatValues[i])) continue;
-            HeatValues[i] = HeatValues[i] > 0.0f
-                ? FMath::Max(0.0f, HeatValues[i] - HeatStep * 0.18f)
-                : FMath::Min(0.0f, HeatValues[i] + HeatStep * 0.18f);
-            bHeatChanged = true;
-        }
-        if (bHeatChanged)
-        {
-            RefreshSurfaceVertexColors();
-            PlanetMesh->UpdateMeshSection_LinearColor(0, DeformedVertices, Normals, UVs, VertexColors, Tangents);
-        }
+        const float Step = ImpactMaskUpdateAccumulator;
+        ImpactMaskUpdateAccumulator = 0.0f;
+        UpdateImpactMask(Step, true);
     }
 }
 
@@ -100,10 +81,7 @@ void AEarthfallPlanet::BuildPlanetMesh()
     UVs.Reset();
     VertexColors.Reset();
     BaseVertexColors.Reset();
-    HeatValues.Reset();
     Tangents.Reset();
-    if (!SurfaceTexture) BuildProceduralSurfaceTexture();
-
     for (int32 Lat = 0; Lat <= LatitudeSegments; ++Lat)
     {
         const float V = static_cast<float>(Lat) / LatitudeSegments;
@@ -111,20 +89,15 @@ void AEarthfallPlanet::BuildPlanetMesh()
         for (int32 Lon = 0; Lon <= LongitudeSegments; ++Lon)
         {
             const float U = static_cast<float>(Lon) / LongitudeSegments;
-            const float Theta = U * 2.0f * PI;
+            // NASA equirectangular maps begin at 180W on the left edge.
+            const float Theta = (U - 0.5f) * 2.0f * PI;
             const FVector Direction(FMath::Sin(Phi) * FMath::Cos(Theta),
                                     FMath::Sin(Phi) * FMath::Sin(Theta),
                                     FMath::Cos(Phi));
             BaseVertices.Add(Direction * PlanetRadius);
             UVs.Add(FVector2D(U, V));
-            const int32 TextureX = FMath::Clamp(FMath::RoundToInt(U * (SurfaceTextureWidth - 1)), 0, SurfaceTextureWidth - 1);
-            const int32 TextureY = FMath::Clamp(FMath::RoundToInt(V * (SurfaceTextureHeight - 1)), 0, SurfaceTextureHeight - 1);
-            const FColor Texel = SurfaceTexturePixels[TextureY * SurfaceTextureWidth + TextureX];
-            FLinearColor SurfaceColor(Texel.R / 255.0f, Texel.G / 255.0f, Texel.B / 255.0f, 1.0f);
-            SurfaceColor.A = 0.0f;
-            BaseVertexColors.Add(SurfaceColor);
-            VertexColors.Add(SurfaceColor);
-            HeatValues.Add(0.0f);
+            BaseVertexColors.Add(FLinearColor::White);
+            VertexColors.Add(FLinearColor::White);
             Tangents.Add(FProcMeshTangent(-FMath::Sin(Theta), FMath::Cos(Theta), 0.0f));
         }
     }
@@ -147,60 +120,27 @@ void AEarthfallPlanet::BuildPlanetMesh()
     PlanetMesh->UpdateMeshSection_LinearColor(0, DeformedVertices, Normals, UVs, VertexColors, Tangents);
 }
 
-void AEarthfallPlanet::BuildProceduralSurfaceTexture()
-{
-    SurfaceTexturePixels.SetNumUninitialized(SurfaceTextureWidth * SurfaceTextureHeight);
-    for (int32 Y = 0; Y < SurfaceTextureHeight; ++Y)
-    {
-        const float V = static_cast<float>(Y) / (SurfaceTextureHeight - 1);
-        const float Phi = V * PI;
-        for (int32 X = 0; X < SurfaceTextureWidth; ++X)
-        {
-            const float U = static_cast<float>(X) / (SurfaceTextureWidth - 1);
-            const float Theta = U * 2.0f * PI;
-            const FVector Dir(FMath::Sin(Phi) * FMath::Cos(Theta), FMath::Sin(Phi) * FMath::Sin(Theta), FMath::Cos(Phi));
-            const float N = 0.58f * FMath::PerlinNoise3D(Dir * 3.6f) + 0.27f * FMath::PerlinNoise3D(Dir * 8.8f)
-                + 0.11f * FMath::PerlinNoise3D(Dir * 18.0f) + 0.04f * FMath::PerlinNoise3D(Dir * 37.0f);
-            const float Land = FMath::SmoothStep(-0.035f, 0.09f, N);
-            const float Ridge = FMath::SmoothStep(0.34f, 0.58f, N);
-            const float Ice = FMath::SmoothStep(0.70f, 0.78f, FMath::Abs(static_cast<float>(Dir.Z))) * FMath::Clamp(0.62f + N * 0.12f, 0.0f, 0.68f);
-            const FLinearColor Ocean = FLinearColor(0.006f, 0.035f, 0.12f, 1.0f) * FMath::Clamp(0.45f + N * 0.7f, 0.16f, 0.78f);
-            const FLinearColor Ground = FLinearColor::LerpUsingHSV(FLinearColor(0.12f, 0.16f, 0.075f), FLinearColor(0.27f, 0.23f, 0.16f), Ridge);
-            const FLinearColor Color = FMath::Lerp(FMath::Lerp(Ocean, Ground, Land), FLinearColor(0.62f, 0.66f, 0.68f), Ice);
-            SurfaceTexturePixels[Y * SurfaceTextureWidth + X] = Color.ToFColor(false);
-        }
-    }
-    SurfaceTexture = UTexture2D::CreateTransient(SurfaceTextureWidth, SurfaceTextureHeight, PF_B8G8R8A8);
-    if (!SurfaceTexture) return;
-    SurfaceTexture->Filter = TF_Bilinear;
-    SurfaceTexture->AddressX = TA_Wrap;
-    SurfaceTexture->AddressY = TA_Clamp;
-    FTexturePlatformData* PlatformData = SurfaceTexture->GetPlatformData();
-    if (!PlatformData || PlatformData->Mips.IsEmpty()) return;
-    FTexture2DMipMap& Mip = PlatformData->Mips[0];
-    void* Data = Mip.BulkData.Lock(LOCK_READ_WRITE);
-    FMemory::Memcpy(Data, SurfaceTexturePixels.GetData(), SurfaceTexturePixels.Num() * sizeof(FColor));
-    Mip.BulkData.Unlock();
-    SurfaceTexture->UpdateResource();
-}
-
 void AEarthfallPlanet::BuildAtmosphereAndCloudShells()
 {
     UStaticMesh* Sphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-    UMaterialInterface* Glow = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Earthfall/Materials/M_EarthfallShockwave.M_EarthfallShockwave"));
+    UMaterialInterface* Atmosphere = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Earth/Materials/M_EarthAtmosphere.M_EarthAtmosphere"));
+    UMaterialInterface* Clouds = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Earth/Materials/M_EarthClouds.M_EarthClouds"));
+    if (SurfaceMaterialInstance && ImpactMaskRT)
+    {
+        SurfaceMaterialInstance->SetTextureParameterValue(TEXT("ImpactMaskRT"), ImpactMaskRT);
+        PlanetMesh->SetMaterial(0, SurfaceMaterialInstance);
+    }
     if (Sphere && !AtmosphereShell)
     {
         AtmosphereShell = NewObject<UStaticMeshComponent>(this, TEXT("AtmosphereShell"));
         AtmosphereShell->SetupAttachment(Root);
         AtmosphereShell->SetStaticMesh(Sphere);
-        AtmosphereShell->SetRelativeScale3D(FVector(2.02f));
+        AtmosphereShell->SetRelativeScale3D(FVector(2.045f));
         AtmosphereShell->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-        if (Glow)
+        if (Atmosphere)
         {
-            AtmosphereMaterialInstance = UMaterialInstanceDynamic::Create(Glow, this);
+            AtmosphereMaterialInstance = UMaterialInstanceDynamic::Create(Atmosphere, this);
             AtmosphereShell->SetMaterial(0, AtmosphereMaterialInstance);
-            AtmosphereMaterialInstance->SetVectorParameterValue(TEXT("GlowColor"), FLinearColor(0.08f, 0.28f, 0.72f));
-            AtmosphereMaterialInstance->SetScalarParameterValue(TEXT("Opacity"), 0.025f);
         }
         AtmosphereShell->RegisterComponent();
     }
@@ -209,85 +149,143 @@ void AEarthfallPlanet::BuildAtmosphereAndCloudShells()
         CloudLayer = NewObject<UProceduralMeshComponent>(this, TEXT("CloudLayer"));
         CloudLayer->SetupAttachment(Root);
         CloudLayer->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        CloudLayer->SetCastShadow(false);
         CloudLayer->RegisterComponent();
     }
-    CloudDensity.SetNumZeroed(BaseVertices.Num());
-    BaseCloudDensity.SetNumZeroed(BaseVertices.Num());
     CloudVertices = BaseVertices;
     for (FVector& Vertex : CloudVertices) Vertex = Vertex.GetSafeNormal() * PlanetRadius * 1.012f;
-    for (int32 i = 0; i < CloudVertices.Num(); ++i)
-    {
-        const FVector D = CloudVertices[i].GetSafeNormal();
-        BaseCloudDensity[i] = FMath::Clamp(0.5f + 0.5f * FMath::PerlinNoise3D(D * 24.0f), 0.0f, 1.0f);
-        CloudDensity[i] = BaseCloudDensity[i];
-        const float CloudCoverage = FMath::SmoothStep(0.42f, 0.62f, CloudDensity[i]);
-        CloudVertices[i] = D * PlanetRadius * FMath::Lerp(0.98f, 1.012f, CloudCoverage);
-    }
-    for (int32 i = 0; i < CloudColors.Num(); ++i) CloudColors[i].A = CloudDensity[i] * 0.12f;
-    if (CloudLayer && CloudLayer->GetProcMeshSection(0))
-        CloudLayer->UpdateMeshSection_LinearColor(0, CloudVertices, Normals, UVs, CloudColors, Tangents);
     CloudColors.SetNumUninitialized(CloudVertices.Num());
-    for (int32 i = 0; i < CloudColors.Num(); ++i) CloudColors[i] = FLinearColor(0.72f, 0.82f, 0.92f, CloudDensity[i] * 0.12f);
-    CloudLayer->CreateMeshSection_LinearColor(0, CloudVertices, Triangles, Normals, UVs, CloudColors, Tangents, false);
-    if (Glow)
+    for (FLinearColor& Color : CloudColors) Color = FLinearColor::White;
+    if (CloudLayer && !CloudLayer->GetProcMeshSection(0))
     {
-        CloudMaterialInstance = UMaterialInstanceDynamic::Create(Glow, this);
-        CloudMaterialInstance->SetVectorParameterValue(TEXT("GlowColor"), FLinearColor(0.32f, 0.42f, 0.58f));
-        CloudMaterialInstance->SetScalarParameterValue(TEXT("Opacity"), 0.025f);
+        CloudLayer->CreateMeshSection_LinearColor(0, CloudVertices, Triangles, Normals, UVs, CloudColors, Tangents, false);
+    }
+    if (Clouds)
+    {
+        CloudMaterialInstance = UMaterialInstanceDynamic::Create(Clouds, this);
+        if (ImpactMaskRT) CloudMaterialInstance->SetTextureParameterValue(TEXT("ImpactMaskRT"), ImpactMaskRT);
         CloudLayer->SetMaterial(0, CloudMaterialInstance);
+        CloudLayer->SetVisibility(true);
     }
 }
 
-void AEarthfallPlanet::ClearCloudsAtImpact(const FVector& LocalDirection, float Radius)
+void AEarthfallPlanet::BuildImpactMaskResources()
 {
-    const float CosRadius = FMath::Cos(Radius / PlanetRadius * 1.5f);
-    for (int32 i = 0; i < BaseVertices.Num(); ++i)
+    ImpactMaskRT = NewObject<UTextureRenderTarget2D>(this, TEXT("ImpactMaskRT"));
+    ImpactMaskRT->RenderTargetFormat = ETextureRenderTargetFormat::RTF_RGBA8;
+    ImpactMaskRT->ClearColor = FLinearColor::Black;
+    ImpactMaskRT->bAutoGenerateMips = false;
+    ImpactMaskRT->InitCustomFormat(ImpactMaskWidth, ImpactMaskHeight, PF_B8G8R8A8, false);
+    ImpactMaskRT->UpdateResourceImmediate(true);
+
+    ImpactStampTexture = UTexture2D::CreateTransient(ImpactStampSize, ImpactStampSize, PF_B8G8R8A8);
+    if (!ImpactStampTexture) return;
+    ImpactStampTexture->Filter = TF_Bilinear;
+    ImpactStampTexture->AddressX = TA_Clamp;
+    ImpactStampTexture->AddressY = TA_Clamp;
+    FTexturePlatformData* PlatformData = ImpactStampTexture->GetPlatformData();
+    if (!PlatformData || PlatformData->Mips.IsEmpty()) return;
+    FTexture2DMipMap& Mip = PlatformData->Mips[0];
+    FColor* Pixels = static_cast<FColor*>(Mip.BulkData.Lock(LOCK_READ_WRITE));
+    for (int32 Y = 0; Y < ImpactStampSize; ++Y)
     {
-        if (FVector::DotProduct(BaseVertices[i].GetSafeNormal(), LocalDirection) > CosRadius)
+        for (int32 X = 0; X < ImpactStampSize; ++X)
         {
-            CloudDensity[i] = 0.0f;
-            CloudVertices[i] = BaseVertices[i].GetSafeNormal() * PlanetRadius * 0.98f;
+            const float DX = (X + 0.5f - ImpactStampSize * 0.5f) / (ImpactStampSize * 0.5f);
+            const float DY = (Y + 0.5f - ImpactStampSize * 0.5f) / (ImpactStampSize * 0.5f);
+            const float R = FMath::Sqrt(DX * DX + DY * DY);
+            const float Coverage = 1.0f - FMath::SmoothStep(0.72f, 1.0f, R);
+            Pixels[Y * ImpactStampSize + X] = FColor(
+                FMath::RoundToInt(Coverage * 255.0f), FMath::RoundToInt(Coverage * 255.0f),
+                FMath::RoundToInt(Coverage * 255.0f), FMath::RoundToInt(Coverage * 255.0f));
         }
     }
-    for (int32 i = 0; i < CloudColors.Num(); ++i) CloudColors[i].A = CloudDensity[i] * 0.12f;
-    CloudLayer->UpdateMeshSection_LinearColor(0, CloudVertices, Normals, UVs, CloudColors, Tangents);
+    Mip.BulkData.Unlock();
+    ImpactStampTexture->UpdateResource();
+}
+
+void AEarthfallPlanet::StampImpactMask(const FVector& LocalDirection, float Radius, bool bNuclear)
+{
+    FImpactMaskStamp& Stamp = ImpactMaskStamps.AddDefaulted_GetRef();
+    Stamp.Direction = LocalDirection.GetSafeNormal();
+    Stamp.Radius = Radius;
+    Stamp.Age = 0.0f;
+    Stamp.bNuclear = bNuclear;
+    UpdateImpactMask(0.0f, false);
+}
+
+void AEarthfallPlanet::UpdateImpactMask(float DeltaSeconds, bool bAdvanceAge)
+{
+    if (!ImpactMaskRT || !ImpactStampTexture || !GetWorld()) return;
+    if (bAdvanceAge)
+    {
+        for (FImpactMaskStamp& Stamp : ImpactMaskStamps) Stamp.Age += DeltaSeconds;
+    }
+    UKismetRenderingLibrary::ClearRenderTarget2D(GetWorld(), ImpactMaskRT, FLinearColor::Black);
+    UCanvas* Canvas = nullptr;
+    FVector2D CanvasSize;
+    FDrawToRenderTargetContext Context;
+    UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(GetWorld(), ImpactMaskRT, Canvas, CanvasSize, Context);
+    if (Canvas)
+    {
+        for (const FImpactMaskStamp& Stamp : ImpactMaskStamps)
+        {
+            const FVector Direction = Stamp.Direction;
+            const float U = (FMath::Atan2(Direction.Y, Direction.X) + PI) / (2.0f * PI);
+            const float V = FMath::Acos(FMath::Clamp(Direction.Z, -1.0f, 1.0f)) / PI;
+            const float AngularRadius = Stamp.Radius / PlanetRadius;
+            const float HalfU = FMath::Clamp(AngularRadius / (2.0f * PI * FMath::Max(0.12f, FMath::Cos(V * PI - PI * 0.5f))), 0.0005f, 0.24f);
+            const float HalfV = FMath::Clamp(AngularRadius / (2.0f * PI), 0.0005f, 0.24f);
+            const float Width = HalfU * 2.0f * CanvasSize.X;
+            const float Height = HalfV * 2.0f * CanvasSize.Y;
+            const float Heat = FMath::Exp(-Stamp.Age / (Stamp.bNuclear ? 36.0f : 18.0f));
+            const float CloudClear = FMath::Clamp(1.0f - Stamp.Age / (Stamp.bNuclear ? 36.0f : 16.0f), 0.0f, 1.0f);
+            const FLinearColor Tint(0.86f, Heat, CloudClear, 1.0f);
+            for (int32 Wrap = -1; Wrap <= 1; ++Wrap)
+            {
+                const float CenterX = (U + static_cast<float>(Wrap)) * CanvasSize.X;
+                if (CenterX + Width * 0.5f < 0.0f || CenterX - Width * 0.5f > CanvasSize.X) continue;
+                Canvas->K2_DrawTexture(ImpactStampTexture,
+                    FVector2D(CenterX - Width * 0.5f, V * CanvasSize.Y - Height * 0.5f), FVector2D(Width, Height),
+                    FVector2D::ZeroVector, FVector2D(1.0f, 1.0f), Tint, BLEND_Additive, 0.0f, FVector2D(0.5f, 0.5f));
+            }
+        }
+    }
+    UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(GetWorld(), Context);
+}
+
+void AEarthfallPlanet::UpdateSunDirection()
+{
+    if (!SurfaceMaterialInstance || !GetWorld()) return;
+    for (TActorIterator<ADirectionalLight> It(GetWorld()); It; ++It)
+    {
+        const FVector ToSun = -It->GetActorForwardVector().GetSafeNormal();
+        SurfaceMaterialInstance->SetVectorParameterValue(
+            TEXT("SunDirection"), FLinearColor(ToSun.X, ToSun.Y, ToSun.Z, 0.0f));
+        break;
+    }
 }
 
 void AEarthfallPlanet::RefreshSurfaceVertexColors()
 {
-    UEarthfallPopulationSubsystem* Population = GetWorld()
-        ? GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>() : nullptr;
-    for (int32 i = 0; i < VertexColors.Num(); ++i)
-    {
-        FLinearColor Color = BaseVertexColors[i];
-        const float CityLight = Population ? Population->GetCityLightAtDirection(BaseVertices[i].GetSafeNormal()) : 0.0f;
-        Color += FLinearColor(0.28f, 0.12f, 0.025f, 0.0f) * CityLight;
-        const float Heat = HeatValues[i];
-        if (Heat > 0.0f)
-        {
-            const FLinearColor HeatColor(1.0f, 0.17f, 0.025f, 1.0f);
-            Color = FLinearColor::LerpUsingHSV(Color, HeatColor, Heat);
-        }
-        else if (Heat < 0.0f)
-        {
-            Color = FLinearColor::LerpUsingHSV(Color, FLinearColor(0.55f, 0.86f, 1.0f, 1.0f), -Heat);
-        }
-        Color.A = FMath::Max(CityLight * 0.55f, FMath::Abs(Heat));
-        VertexColors[i] = Color;
-    }
+    for (FLinearColor& Color : VertexColors) Color = FLinearColor::White;
 }
 
 void AEarthfallPlanet::ResetPlanet()
 {
     if (UEarthfallPopulationSubsystem* Population = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>()) Population->ResetSimulation();
+    ImpactMaskStamps.Reset();
+    if (ImpactMaskRT) UKismetRenderingLibrary::ClearRenderTarget2D(GetWorld(), ImpactMaskRT, FLinearColor::Black);
+    if (CloudLayer) CloudLayer->SetRelativeRotation(FRotator::ZeroRotator);
     BuildPlanetMesh();
-    if (CloudLayer) BuildAtmosphereAndCloudShells();
+    UpdateImpactMask(0.0f, false);
 }
 
 void AEarthfallPlanet::ApplyImpact(FVector WorldLocation, float Radius, float Energy, int32 WeaponIndex)
 {
     const FVector LocalDirection = GetActorTransform().InverseTransformVectorNoScale(WorldLocation - GetActorLocation()).GetSafeNormal();
-    ClearCloudsAtImpact(LocalDirection, Radius);
+    const bool bNuclear = WeaponIndex == 5;
+    StampImpactMask(LocalDirection, Radius * (bNuclear ? 3.5f : 1.0f), bNuclear);
     if (UEarthfallPopulationSubsystem* Population = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>())
     {
         Population->ApplyStrike(LocalDirection, Radius / PlanetRadius, Energy, WeaponIndex);
@@ -295,8 +293,8 @@ void AEarthfallPlanet::ApplyImpact(FVector WorldLocation, float Radius, float En
     const FVector WorldNormal = GetActorTransform().TransformVectorNoScale(LocalDirection).GetSafeNormal();
     const FVector SurfacePoint = WorldLocation;
     const float SafeRadius = FMath::Clamp(Radius, 2.0f, PlanetRadius * 0.45f);
-    const float WeaponDepthScale[] = {1.0f, 0.72f, 1.38f, 1.55f, 0.5f};
-    const float Depth = FMath::Clamp(Energy * 0.12f * WeaponDepthScale[FMath::Clamp(WeaponIndex, 0, 4)], 2.0f, PlanetRadius * 0.28f);
+    const float WeaponDepthScale[] = {1.0f, 0.72f, 1.38f, 1.55f, 0.5f, 0.82f};
+    const float Depth = FMath::Clamp(Energy * 0.12f * WeaponDepthScale[FMath::Clamp(WeaponIndex, 0, 5)], 2.0f, PlanetRadius * 0.28f);
     const float CosAngle = FMath::Cos(SafeRadius / PlanetRadius);
 
     for (int32 i = 0; i < BaseVertices.Num(); ++i)
@@ -315,19 +313,6 @@ void AEarthfallPlanet::ApplyImpact(FVector WorldLocation, float Radius, float En
         const float NewRadius = FMath::Max(PlanetRadius * 0.55f,
             DeformedVertices[i].Size() - Depth * SmoothFalloff + RimLift);
         DeformedVertices[i] = Direction * NewRadius;
-        const float Heat = SmoothFalloff;
-        HeatValues[i] = WeaponIndex == 4 ? FMath::Min(HeatValues[i], -Heat) : FMath::Max(HeatValues[i], Heat);
-        const FLinearColor BaseColor = BaseVertexColors[i];
-        const bool bOcean = BaseColor.B > BaseColor.G * 1.6f && BaseColor.B > BaseColor.R * 1.8f;
-        const bool bPolar = BaseColor.R > 0.10f && BaseColor.G > 0.16f && BaseColor.B > 0.18f;
-        const FLinearColor Scorch = bOcean
-            ? FLinearColor(0.16f, 0.055f, 0.025f, 1.0f)
-            : (bPolar ? FLinearColor(0.25f, 0.12f, 0.045f, 1.0f) : FLinearColor(0.055f, 0.025f, 0.012f, 1.0f));
-        const FLinearColor ColdCore(0.62f, 0.88f, 1.0f, 1.0f);
-        const FLinearColor HotCore(1.0f, 0.19f, 0.018f, 1.0f);
-        VertexColors[i] = FLinearColor::LerpUsingHSV(BaseColor, Scorch, Heat * 0.82f);
-        VertexColors[i] = FLinearColor::LerpUsingHSV(VertexColors[i], WeaponIndex == 4 ? ColdCore : HotCore, Heat * 0.58f);
-        VertexColors[i].A = HeatValues[i];
     }
 
     for (FVector& Normal : Normals) Normal = FVector::ZeroVector;
@@ -347,7 +332,6 @@ void AEarthfallPlanet::ApplyImpact(FVector WorldLocation, float Radius, float En
         Normals[i] = Normals[i].IsNearlyZero() ? BaseVertices[i].GetSafeNormal() : Normals[i].GetSafeNormal();
     }
 
-    RefreshSurfaceVertexColors();
     // Update the existing section and refresh collision for subsequent aiming traces.
     PlanetMesh->UpdateMeshSection_LinearColor(0, DeformedVertices, Normals, UVs, VertexColors, Tangents);
 
@@ -362,11 +346,12 @@ void AEarthfallPlanet::ApplyImpact(FVector WorldLocation, float Radius, float En
             FLinearColor(0.2f, 0.86f, 1.0f),
             FLinearColor(1.0f, 0.22f, 0.035f),
             FLinearColor(0.55f, 0.22f, 0.95f),
-            FLinearColor(0.55f, 0.88f, 1.0f)
+            FLinearColor(0.55f, 0.88f, 1.0f),
+            FLinearColor(0.82f, 0.92f, 1.0f)
         };
-        static const float Lifetimes[] = {0.42f, 0.82f, 1.45f, 1.25f, 1.1f};
-        static const float FlashIntensities[] = {18000.0f, 26000.0f, 38000.0f, 30000.0f, 22000.0f};
-        const int32 SafeWeapon = FMath::Clamp(WeaponIndex, 0, 4);
-        Feedback->InitFeedback(SafeRadius, Colors[SafeWeapon], Lifetimes[SafeWeapon], SafeWeapon == 1, FlashIntensities[SafeWeapon], SafeWeapon == 3);
+        static const float Lifetimes[] = {0.42f, 0.82f, 1.45f, 1.25f, 1.1f, 4.4f};
+        static const float FlashIntensities[] = {18000.0f, 26000.0f, 38000.0f, 30000.0f, 22000.0f, 240000.0f};
+        const int32 SafeWeapon = FMath::Clamp(WeaponIndex, 0, 5);
+        Feedback->InitFeedback(SafeRadius, Colors[SafeWeapon], Lifetimes[SafeWeapon], SafeWeapon == 1, FlashIntensities[SafeWeapon], SafeWeapon == 3, SafeWeapon == 5);
     }
 }

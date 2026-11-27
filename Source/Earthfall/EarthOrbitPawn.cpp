@@ -6,6 +6,9 @@
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
 #include "Components/InputComponent.h"
+#include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "UObject/ConstructorHelpers.h"
 #include "DrawDebugHelpers.h"
 #include "InputCoreTypes.h"
 #include "Framework/Application/SlateApplication.h"
@@ -25,6 +28,12 @@ AEarthOrbitPawn::AEarthOrbitPawn()
     PlanetFillLight->SetAttenuationRadius(1400.0f);
     PlanetFillLight->SetLightColor(FLinearColor(0.30f, 0.52f, 1.0f));
     PlanetFillLight->SetCastShadows(false);
+    TargetPreviewRing = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("TargetPreviewRing"));
+    TargetPreviewRing->SetupAttachment(Root);
+    TargetPreviewRing->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    TargetPreviewRing->SetGenerateOverlapEvents(false);
+    TargetPreviewRing->SetVisibility(false);
+    BuildTargetPreviewRing();
     AutoPossessPlayer = EAutoReceiveInput::Player0;
 }
 
@@ -78,6 +87,7 @@ void AEarthOrbitPawn::Tick(float DeltaSeconds)
     Camera->SetWorldLocation(CameraLocation);
     Camera->SetWorldRotation(CameraRotation);
     UpdateAimState();
+    UpdateTargetPreviewRing();
 }
 
 void AEarthOrbitPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -94,6 +104,7 @@ void AEarthOrbitPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
     PlayerInputComponent->BindAction(TEXT("Weapon3"), IE_Pressed, this, &AEarthOrbitPawn::SelectWeapon3);
     PlayerInputComponent->BindAction(TEXT("Weapon4"), IE_Pressed, this, &AEarthOrbitPawn::SelectWeapon4);
     PlayerInputComponent->BindAction(TEXT("Weapon5"), IE_Pressed, this, &AEarthOrbitPawn::SelectWeapon5);
+    PlayerInputComponent->BindAction(TEXT("Weapon6"), IE_Pressed, this, &AEarthOrbitPawn::SelectWeapon6);
     PlayerInputComponent->BindAction(TEXT("ResetSimulation"), IE_Pressed, this, &AEarthOrbitPawn::ResetSimulation);
 }
 
@@ -122,7 +133,10 @@ void AEarthOrbitPawn::EndOrbit()
 
 void AEarthOrbitPawn::ZoomInput(float Value)
 {
-    Distance = FMath::Clamp(Distance - Value * 25.0f, 135.0f, 1200.0f);
+    const float MinimumDistance = 100.0f * 1.06f;
+    const float Altitude = FMath::Max(0.0f, Distance - 100.0f);
+    const float ZoomStep = FMath::Clamp(Altitude * 0.11f, 0.65f, 24.0f);
+    Distance = FMath::Clamp(Distance - Value * ZoomStep, MinimumDistance, 1200.0f);
 }
 
 void AEarthOrbitPawn::FireImpact()
@@ -145,12 +159,12 @@ void AEarthOrbitPawn::FireImpact()
     {
         for (TActorIterator<AEarthfallPlanet> It(GetWorld()); It; ++It)
         {
-            static const float Radii[] = {8.0f, 15.0f, 25.0f, 19.0f, 13.0f};
-            static const float Energies[] = {50.0f, 100.0f, 180.0f, 145.0f, 110.0f};
+            static const float Radii[] = {8.0f, 15.0f, 25.0f, 19.0f, 13.0f, 32.0f};
+            static const float Energies[] = {50.0f, 100.0f, 180.0f, 145.0f, 110.0f, 155.0f};
             It->ApplyImpact(Hit.ImpactPoint, Radii[WeaponIndex], Energies[WeaponIndex], WeaponIndex);
             TriggerImpactShake();
             ++ImpactCount;
-            static const float Cooldowns[] = {0.35f, 0.8f, 1.5f, 2.0f, 1.25f};
+            static const float Cooldowns[] = {0.35f, 0.8f, 1.5f, 2.0f, 1.25f, 3.5f};
             CooldownDuration = Cooldowns[WeaponIndex];
             CooldownRemaining = CooldownDuration;
             StatusMessage = FString::Printf(TEXT("IMPACT CONFIRMED  //  #%04d"), ImpactCount);
@@ -183,16 +197,83 @@ void AEarthOrbitPawn::UpdateAimState()
         AimHit, Start, Start + Direction * 5000.0f, ECC_Visibility);
 }
 
+void AEarthOrbitPawn::BuildTargetPreviewRing()
+{
+    constexpr int32 MajorSegments = 48;
+    constexpr int32 TubeSegments = 5;
+    constexpr float RingRadius = 1.0f;
+    constexpr float TubeRadius = 0.025f;
+    TArray<FVector> Vertices;
+    TArray<int32> Indices;
+    TArray<FVector> RingNormals;
+    TArray<FVector2D> RingUVs;
+    TArray<FLinearColor> Colors;
+    TArray<FProcMeshTangent> RingTangents;
+    for (int32 Major = 0; Major <= MajorSegments; ++Major)
+    {
+        const float U = static_cast<float>(Major) / MajorSegments;
+        const float Theta = U * 2.0f * PI;
+        const FVector Radial(FMath::Cos(Theta), FMath::Sin(Theta), 0.0f);
+        for (int32 Minor = 0; Minor <= TubeSegments; ++Minor)
+        {
+            const float Phi = static_cast<float>(Minor) / TubeSegments * 2.0f * PI;
+            const FVector Normal = Radial * FMath::Cos(Phi) + FVector::UpVector * FMath::Sin(Phi);
+            Vertices.Add(Radial * (RingRadius + TubeRadius * FMath::Cos(Phi))
+                + FVector::UpVector * (TubeRadius * FMath::Sin(Phi)));
+            RingNormals.Add(Normal);
+            RingUVs.Add(FVector2D(U, static_cast<float>(Minor) / TubeSegments));
+            Colors.Add(FLinearColor::White);
+            RingTangents.Add(FProcMeshTangent(-FMath::Sin(Theta), FMath::Cos(Theta), 0.0f));
+        }
+    }
+    for (int32 Major = 0; Major < MajorSegments; ++Major)
+    {
+        for (int32 Minor = 0; Minor < TubeSegments; ++Minor)
+        {
+            const int32 A = Major * (TubeSegments + 1) + Minor;
+            const int32 B = A + TubeSegments + 1;
+            Indices.Append({A, B, A + 1, A + 1, B, B + 1});
+        }
+    }
+    TargetPreviewRing->CreateMeshSection_LinearColor(0, Vertices, Indices, RingNormals, RingUVs, Colors, RingTangents, false);
+    static ConstructorHelpers::FObjectFinder<UMaterialInterface> RingMaterialAsset(
+        TEXT("/Game/Earthfall/Materials/M_EarthfallShockwave.M_EarthfallShockwave"));
+    if (RingMaterialAsset.Succeeded())
+    {
+        if (UMaterialInstanceDynamic* RingMID = UMaterialInstanceDynamic::Create(RingMaterialAsset.Object, this))
+        {
+            RingMID->SetVectorParameterValue(TEXT("GlowColor"), FLinearColor(1.0f, 0.68f, 0.32f));
+            RingMID->SetScalarParameterValue(TEXT("Opacity"), 0.95f);
+            TargetPreviewRing->SetMaterial(0, RingMID);
+        }
+    }
+}
+
+void AEarthOrbitPawn::UpdateTargetPreviewRing()
+{
+    if (!TargetPreviewRing) return;
+    if (!bAimOnPlanet)
+    {
+        TargetPreviewRing->SetVisibility(false);
+        return;
+    }
+    const FVector Normal = AimHit.ImpactNormal.GetSafeNormal();
+    TargetPreviewRing->SetWorldLocation(AimHit.ImpactPoint + Normal * 0.18f);
+    TargetPreviewRing->SetWorldRotation(FRotationMatrix::MakeFromZ(Normal).Rotator());
+    TargetPreviewRing->SetWorldScale3D(FVector(GetCurrentBlastRadius()));
+    TargetPreviewRing->SetVisibility(true);
+}
+
 float AEarthOrbitPawn::GetCurrentBlastRadius() const
 {
-    static const float Radii[] = {8.0f, 15.0f, 25.0f, 19.0f, 13.0f};
+    static const float Radii[] = {8.0f, 15.0f, 25.0f, 19.0f, 13.0f, 32.0f};
     return Radii[WeaponIndex];
 }
 
 void AEarthOrbitPawn::TriggerImpactShake()
 {
-    static const float Strengths[] = {0.8f, 1.4f, 3.0f, 2.2f, 1.7f};
-    static const float Durations[] = {0.22f, 0.34f, 0.72f, 0.55f, 0.42f};
+    static const float Strengths[] = {0.8f, 1.4f, 3.0f, 2.2f, 1.7f, 4.8f};
+    static const float Durations[] = {0.22f, 0.34f, 0.72f, 0.55f, 0.42f, 1.15f};
     ShakeStrength = Strengths[WeaponIndex];
     ShakeDuration = Durations[WeaponIndex];
     ShakeTimeRemaining = ShakeDuration;
@@ -200,8 +281,8 @@ void AEarthOrbitPawn::TriggerImpactShake()
 
 void AEarthOrbitPawn::SelectWeapon(int32 Index)
 {
-    WeaponIndex = FMath::Clamp(Index, 0, 4);
-    static const TCHAR* Names[] = {TEXT("KINETIC ROD"), TEXT("PLASMA LANCE"), TEXT("MANTLE CHARGE"), TEXT("MICRO BLACK HOLE"), TEXT("CRYO IMPACTOR")};
+    WeaponIndex = FMath::Clamp(Index, 0, 5);
+    static const TCHAR* Names[] = {TEXT("KINETIC ROD"), TEXT("PLASMA LANCE"), TEXT("MANTLE CHARGE"), TEXT("MICRO BLACK HOLE"), TEXT("CRYO IMPACTOR"), TEXT("THERMONUCLEAR")};
     StatusMessage = FString::Printf(TEXT("WEAPON SELECTED  //  %s"), Names[WeaponIndex]);
     MessageTimer = 1.0f;
 }
@@ -211,6 +292,7 @@ void AEarthOrbitPawn::SelectWeapon2() { SelectWeapon(1); }
 void AEarthOrbitPawn::SelectWeapon3() { SelectWeapon(2); }
 void AEarthOrbitPawn::SelectWeapon4() { SelectWeapon(3); }
 void AEarthOrbitPawn::SelectWeapon5() { SelectWeapon(4); }
+void AEarthOrbitPawn::SelectWeapon6() { SelectWeapon(5); }
 
 void AEarthOrbitPawn::ResetSimulation()
 {

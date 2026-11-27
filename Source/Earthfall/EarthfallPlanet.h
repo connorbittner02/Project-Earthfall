@@ -39,13 +39,23 @@ private:
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<class UProceduralMeshComponent> CloudLayer;
     UPROPERTY(Transient)
-    TObjectPtr<class UTexture2D> SurfaceTexture;
+    TObjectPtr<class UTextureRenderTarget2D> ImpactMaskRT;
+    UPROPERTY(Transient)
+    TObjectPtr<class UTexture2D> ImpactStampTexture;
     UPROPERTY(Transient)
     TObjectPtr<class UMaterialInstanceDynamic> SurfaceMaterialInstance;
     UPROPERTY(Transient)
     TObjectPtr<class UMaterialInstanceDynamic> AtmosphereMaterialInstance;
     UPROPERTY(Transient)
     TObjectPtr<class UMaterialInstanceDynamic> CloudMaterialInstance;
+    struct FImpactMaskStamp
+    {
+        FVector Direction = FVector::ForwardVector;
+        float Radius = 1.0f;
+        float Age = 0.0f;
+        bool bNuclear = false;
+    };
+    TArray<FImpactMaskStamp> ImpactMaskStamps;
     TArray<FVector> BaseVertices;
     TArray<FVector> DeformedVertices;
     TArray<int32> Triangles;
@@ -53,19 +63,17 @@ private:
     TArray<FVector2D> UVs;
     TArray<FLinearColor> VertexColors;
     TArray<FLinearColor> BaseVertexColors;
-    TArray<float> CloudDensity;
-    TArray<float> BaseCloudDensity;
     TArray<FVector> CloudVertices;
     TArray<FLinearColor> CloudColors;
-    TArray<FColor> SurfaceTexturePixels;
-    TArray<float> HeatValues;
     TArray<FProcMeshTangent> Tangents;
-    float HeatUpdateAccumulator = 0.0f;
-    float CloudUpdateAccumulator = 0.0f;
+    float ImpactMaskUpdateAccumulator = 0.0f;
+    float SunDirectionUpdateAccumulator = 0.0f;
 
     void BuildPlanetMesh();
-    void BuildProceduralSurfaceTexture();
     void RefreshSurfaceVertexColors();
     void BuildAtmosphereAndCloudShells();
-    void ClearCloudsAtImpact(const FVector& LocalDirection, float Radius);
+    void BuildImpactMaskResources();
+    void UpdateImpactMask(float DeltaSeconds, bool bAdvanceAge);
+    void StampImpactMask(const FVector& LocalDirection, float Radius, bool bNuclear = false);
+    void UpdateSunDirection();
 };

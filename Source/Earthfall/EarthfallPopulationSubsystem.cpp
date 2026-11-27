@@ -194,11 +194,11 @@ void UEarthfallPopulationSubsystem::ApplyStrike(const FVector& LocalDirection, f
 	if (Cells.IsEmpty()) SeedPopulation();
 	const FVector Center = LocalDirection.GetSafeNormal();
 	const float StrikeAngle = FMath::Clamp(RadiusRadians, 0.002f, PI * 0.45f);
-	static const float PeakCasualtyFractions[] = {0.38f, 0.24f, 0.62f, 0.85f, 0.42f};
-	static const float PeakDisplacementFractions[] = {0.56f, 0.64f, 0.82f, 0.38f, 0.48f};
-	const int32 SafeWeapon = FMath::Clamp(WeaponIndex, 0, 4);
+	static const float PeakCasualtyFractions[] = {0.38f, 0.24f, 0.62f, 0.85f, 0.42f, 0.76f};
+	static const float PeakDisplacementFractions[] = {0.56f, 0.64f, 0.82f, 0.38f, 0.48f, 0.88f};
+	const int32 SafeWeapon = FMath::Clamp(WeaponIndex, 0, 5);
 	const float EnergyScale = FMath::Clamp(Energy / 180.0f, 0.2f, 1.15f);
-	const float FalloutAngle = StrikeAngle * (SafeWeapon == 2 ? 2.1f : 1.7f);
+	const float FalloutAngle = StrikeAngle * (SafeWeapon == 5 ? 3.5f : (SafeWeapon == 2 ? 2.1f : 1.7f));
 	double NewCasualties = 0.0;
 	double NewDisplaced = 0.0;
 
@@ -238,21 +238,22 @@ void UEarthfallPopulationSubsystem::ApplyStrike(const FVector& LocalDirection, f
 			Cell.HazardHeat = SafeWeapon == 4
 				? FMath::Min(Cell.HazardHeat, -0.8f * CoreProfile)
 				: FMath::Max(Cell.HazardHeat, CoreProfile * EnergyScale);
+			if (SafeWeapon == 5) Cell.HazardHeat = FMath::Max(Cell.HazardHeat, 1.5f * FalloutProfile);
 		}
 	}
 
 	Telemetry.TotalCasualties += NewCasualties;
 	Telemetry.LivingPopulation = FMath::Max(0.0, Telemetry.LivingPopulation - NewCasualties);
 	Telemetry.DisplacedPopulation += NewDisplaced;
-	Telemetry.AtmosphereHealth = FMath::Max(0.0f, Telemetry.AtmosphereHealth - (SafeWeapon == 4 ? 0.06f : 0.22f + EnergyScale * 0.55f));
-	Telemetry.MeanTemperatureC += SafeWeapon == 4 ? -0.55f : (SafeWeapon == 2 ? 0.22f : SafeWeapon == 3 ? -0.08f : 0.04f);
+	Telemetry.AtmosphereHealth = FMath::Max(0.0f, Telemetry.AtmosphereHealth - (SafeWeapon == 4 ? 0.06f : SafeWeapon == 5 ? 1.2f : 0.22f + EnergyScale * 0.55f));
+	Telemetry.MeanTemperatureC += SafeWeapon == 4 ? -0.55f : (SafeWeapon == 2 ? 0.22f : SafeWeapon == 3 ? -0.08f : SafeWeapon == 5 ? 0.38f : 0.04f);
 	Telemetry.DebrisMass += Energy * (SafeWeapon == 3 ? 0.012f : 0.028f);
 
 	GridPowerSum = 0.0f;
 	for (const FEarthfallPopulationCell& Cell : Cells) GridPowerSum += Cell.PowerGridHealth;
 	Telemetry.GridBlackoutPercent = Cells.IsEmpty() ? 0.0f : (1.0f - GridPowerSum / Cells.Num()) * 100.0f;
 
-	static const TCHAR* WeaponNames[] = {TEXT("kinetic impact"), TEXT("plasma lance"), TEXT("mantle charge"), TEXT("micro black hole"), TEXT("cryo impactor")};
+	static const TCHAR* WeaponNames[] = {TEXT("kinetic impact"), TEXT("plasma lance"), TEXT("mantle charge"), TEXT("micro black hole"), TEXT("cryo impactor"), TEXT("thermonuclear strike")};
 	bool bNearCity = false;
 	const FString Region = DescribeImpactRegion(Center, bNearCity);
 	const double OffsetKm = StrikeAngle * EarthRadiusKm;
@@ -260,20 +261,21 @@ void UEarthfallPopulationSubsystem::ApplyStrike(const FVector& LocalDirection, f
 		? FString::Printf(TEXT("%.2fM"), NewCasualties / 1000000.0)
 		: FString::Printf(TEXT("%.0f"), NewCasualties);
 	const FString PowerText = FString::Printf(TEXT("%.0f%% grid blackout"), Telemetry.GridBlackoutPercent);
-	const FString Alert = SafeWeapon == 2 ? TEXT("seismic and coastal wave watch")
+	const FString Alert = SafeWeapon == 5 ? TEXT("fallout plume + regional EMP blackout")
+		: (SafeWeapon == 2 ? TEXT("seismic and coastal wave watch")
 		: (SafeWeapon == 1 ? TEXT("thermal plume advisory")
-		: (SafeWeapon == 4 ? TEXT("regional freeze warning") : TEXT("impact response")));
-	const FString Dispatch = FString::Printf(
-		TEXT("[BREAKING · %s] Orbital %s  //  %s casualties  //  %s  //  %s"),
-		*Region, WeaponNames[SafeWeapon], *CasualtyText, *PowerText, *Alert);
+		: (SafeWeapon == 4 ? TEXT("regional freeze warning") : TEXT("impact response"))));
+	const FString Dispatch = SafeWeapon == 5
+		? FString::Printf(TEXT("[NUCLEAR DETONATION · %s] Thermal + fallout %s casualties  //  %s  //  3.5x EMP radius"), *Region, *CasualtyText, *PowerText)
+		: FString::Printf(TEXT("[BREAKING · %s] Orbital %s  //  %s casualties  //  %s  //  %s"), *Region, WeaponNames[SafeWeapon], *CasualtyText, *PowerText, *Alert);
 	if (!bNearCity)
 	{
 		EnqueueNews(Dispatch + FString::Printf(TEXT("  //  %.0f KM IMPACT ZONE"), OffsetKm),
-			Telemetry.AtmosphereHealth < 70.0f ? 5 : (NewCasualties >= 100000000.0 ? 4 : (NewCasualties >= 1000000.0 ? 3 : 1)));
+			SafeWeapon == 5 ? 10 : (Telemetry.AtmosphereHealth < 70.0f ? 5 : (NewCasualties >= 100000000.0 ? 4 : (NewCasualties >= 1000000.0 ? 3 : 1))));
 	}
 	else
 	{
-		EnqueueNews(Dispatch, Telemetry.AtmosphereHealth < 70.0f ? 5 : (NewCasualties >= 100000000.0 ? 4 : (NewCasualties >= 1000000.0 ? 3 : 2)));
+		EnqueueNews(Dispatch, SafeWeapon == 5 ? 10 : (Telemetry.AtmosphereHealth < 70.0f ? 5 : (NewCasualties >= 100000000.0 ? 4 : (NewCasualties >= 1000000.0 ? 3 : 2))));
 	}
 }
 
