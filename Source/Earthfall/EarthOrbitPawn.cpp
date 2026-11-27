@@ -1,6 +1,7 @@
 #include "EarthOrbitPawn.h"
 #include "EarthfallHUD.h"
 #include "EarthfallPlanet.h"
+#include "EarthfallPopulationSubsystem.h"
 #include "EarthfallProjectile.h"
 #include "Camera/CameraComponent.h"
 #include "Components/InputComponent.h"
@@ -139,6 +140,10 @@ void AEarthOrbitPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 	PlayerInputComponent->BindKey(EKeys::D, IE_Pressed, this, &AEarthOrbitPawn::RadiusUp);
 	PlayerInputComponent->BindKey(EKeys::Z, IE_Pressed, this, &AEarthOrbitPawn::FalloutDown);
 	PlayerInputComponent->BindKey(EKeys::C, IE_Pressed, this, &AEarthOrbitPawn::FalloutUp);
+	// H cycles Full HUD -> ticker-only cinema mode -> hidden. Tab or MMB toggles inspect mode.
+	PlayerInputComponent->BindKey(EKeys::H, IE_Pressed, this, &AEarthOrbitPawn::CycleHudMode);
+	PlayerInputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &AEarthOrbitPawn::ToggleInspectMode);
+	PlayerInputComponent->BindKey(EKeys::MiddleMouseButton, IE_Pressed, this, &AEarthOrbitPawn::ToggleInspectMode);
 }
 
 void AEarthOrbitPawn::OrbitYawInput(float Value)
@@ -250,16 +255,24 @@ void AEarthOrbitPawn::FireImpact()
 		}
 	}
 
-	if (CooldownRemaining > 0.0f)
-	{
-		SetStatus(TEXT("WEAPON RECHARGING"), 0.7f);
-		return;
-	}
 	FVector Start;
 	FVector Direction;
 	if (!PC->DeprojectMousePositionToWorld(Start, Direction)) return;
 	FHitResult Hit;
 	AEarthfallPlanet* Planet = FindPlanet();
+	if (bInspectMode)
+	{
+		if (Planet && GetWorld()->LineTraceSingleByChannel(Hit, Start, Start + Direction * 5000.0f, ECC_Visibility))
+		{
+			InspectDirection(Planet->GetActorTransform().InverseTransformVectorNoScale(Hit.ImpactPoint - Planet->GetActorLocation()));
+		}
+		return;
+	}
+	if (CooldownRemaining > 0.0f)
+	{
+		SetStatus(TEXT("WEAPON RECHARGING"), 0.7f);
+		return;
+	}
 	if (Planet && GetWorld()->LineTraceSingleByChannel(Hit, Start, Start + Direction * 5000.0f, ECC_Visibility))
 	{
 		LaunchStrike(Planet, Hit.ImpactPoint);
@@ -326,6 +339,34 @@ void AEarthOrbitPawn::TriggerImpactShake(const FEarthfallStrike& Strike)
 	ShakeStrength = FMath::Min(Strength, 14.0f);
 	ShakeDuration = Spec.ShakeDuration * (0.8f + 0.2f * YieldGain);
 	ShakeTimeRemaining = ShakeDuration;
+}
+
+void AEarthOrbitPawn::CycleHudMode()
+{
+	HudMode = HudMode == EEarthfallHudMode::Full ? EEarthfallHudMode::TickerOnly
+		: (HudMode == EEarthfallHudMode::TickerOnly ? EEarthfallHudMode::Hidden : EEarthfallHudMode::Full);
+}
+
+void AEarthOrbitPawn::ToggleInspectMode()
+{
+	bInspectMode = !bInspectMode;
+	if (!bInspectMode)
+	{
+		InspectedCountry = 0;
+		if (AEarthfallPlanet* Planet = FindPlanet()) Planet->SetHighlightedCountry(0);
+	}
+	SetStatus(bInspectMode ? TEXT("INSPECT MODE  //  CLICK A COUNTRY") : TEXT("WEAPONS LIVE"), 1.2f);
+}
+
+void AEarthOrbitPawn::InspectDirection(const FVector& PlanetLocalDirection)
+{
+	UEarthfallPopulationSubsystem* Population = GetWorld() ? GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>() : nullptr;
+	if (!Population) return;
+	bInspectMode = true;
+	InspectedCountry = Population->GetCountryAtDirection(PlanetLocalDirection);
+	if (AEarthfallPlanet* Planet = FindPlanet()) Planet->SetHighlightedCountry(InspectedCountry);
+	if (InspectedCountry > 0) Population->AnnounceCountry(InspectedCountry);
+	else SetStatus(TEXT("INTERNATIONAL WATERS"), 1.0f);
 }
 
 void AEarthOrbitPawn::ResetSimulation()

@@ -153,6 +153,11 @@ void AEarthfallPlanet::Tick(float DeltaSeconds)
 	}
 }
 
+void AEarthfallPlanet::SetHighlightedCountry(int32 CountryId)
+{
+	if (SurfaceMID) SurfaceMID->SetVectorParameterValue(TEXT("Inspect"), FLinearColor(static_cast<float>(CountryId), CountryId > 0 ? 1.0f : 0.0f, 0.0f, 0.0f));
+}
+
 FVector AEarthfallPlanet::GetSunDirectionWorld() const
 {
 	return GetActorTransform().TransformVectorNoScale(SunDirectionLocal).GetSafeNormal();

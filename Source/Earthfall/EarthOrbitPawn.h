@@ -6,6 +6,14 @@
 #include "EarthOrbitPawn.generated.h"
 
 class AEarthfallPlanet;
+
+/** How much of the HUD is drawn. H cycles through these. */
+enum class EEarthfallHudMode : uint8
+{
+	Full,
+	TickerOnly,
+	Hidden
+};
 class UCameraComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
@@ -39,12 +47,21 @@ public:
 	const FString& GetStatusMessage() const { return StatusMessage; }
 	float GetMessageTimer() const { return MessageTimer; }
 	float GetOrbitDistance() const { return Distance; }
+	EEarthfallHudMode GetHudMode() const { return HudMode; }
+	bool IsInspectMode() const { return bInspectMode; }
+	int32 GetInspectedCountry() const { return InspectedCountry; }
 
 	// --- Driven by input, HUD buttons and the capture director.
 	void SelectWeapon(int32 Index);
 	void AdjustMultiplier(EEarthfallMultiplier Kind, int32 Delta);
 	void SetMultiplierIndex(EEarthfallMultiplier Kind, int32 Index);
 	void ResetSimulation();
+	void CycleHudMode();
+	void SetHudMode(EEarthfallHudMode Mode) { HudMode = Mode; }
+	/** In inspect mode a click opens a nation's dossier instead of launching. */
+	void ToggleInspectMode();
+	/** Open the dossier for whichever nation lies under a planet-local direction. */
+	void InspectDirection(const FVector& PlanetLocalDirection);
 	/** Point the camera at a longitude/latitude from a given distance from the planet centre. */
 	void SetOrbitView(float LongitudeDegrees, float LatitudeDegrees, float InDistance);
 	/** Launch the selected weapon at a planet-local unit direction, ignoring cooldown. */
@@ -97,6 +114,9 @@ private:
 	bool bIsOrbiting = false;
 	bool bAimOnPlanet = false;
 	bool bLaunchFromRight = true;
+	bool bInspectMode = false;
+	int32 InspectedCountry = 0;
+	EEarthfallHudMode HudMode = EEarthfallHudMode::Full;
 
 	int32 WeaponIndex = 0;
 	int32 MultiplierIndices[static_cast<int32>(EEarthfallMultiplier::Count)];

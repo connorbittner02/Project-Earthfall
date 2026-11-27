@@ -244,7 +244,7 @@ def mask(material, source, channels):
 # ---------------------------------------------------------------------------
 # Materials
 # ---------------------------------------------------------------------------
-def build_surface(day, night, normal, masks, black):
+def build_surface(day, night, normal, masks, countries, black):
     material = create_material(MATERIAL_DIR, "M_EarthPhotoreal")
     material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
     color = unreal.MaterialSamplerType.SAMPLERTYPE_COLOR
@@ -262,6 +262,8 @@ def build_surface(day, night, normal, masks, black):
         ("MasksTex", texture_sample(material, "MasksTexture", masks, unreal.MaterialSamplerType.SAMPLERTYPE_MASKS, 500), "RGB"),
         ("Mask", texture_sample(material, "ImpactMaskRT", black, color, 700), "RGB"),
         ("Ash", texture_sample(material, "AshPlumeRT", black, color, 900), "RGB"),
+        ("CountryId", texture_sample(material, "CountryIDTexture", countries, unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_GRAYSCALE, 1000), "R"),
+        ("Inspect", vector_parameter(material, "Inspect", (0.0, 0.0, 0.0, 0.0), 1050), "RGBA"),
         ("Sun", vector_parameter(material, "SunDirection", (1.0, 0.0, 0.0, 0.0), 1100), "RGB"),
         ("Time", node(material, unreal.MaterialExpressionTime, -900, 1200), ""),
         ("CloudLayer", vector_parameter(material, "CloudLayer", (0.0, 0.52, 1.25, 0.004), 1300), "RGBA"),
@@ -454,11 +456,17 @@ def main():
     normal = import_texture("T_Earth_Normal.png", "T_Earth_Normal", False, unreal.TextureCompressionSettings.TC_NORMALMAP)
     masks = import_texture("T_Earth_Masks.png", "T_Earth_Masks", False, unreal.TextureCompressionSettings.TC_MASKS)
     sky = import_texture("ESO_MilkyWay_Brunier_eso0932a.jpg", "T_Space_Skybox", True, default)
+    # IDs are data: uncompressed 8-bit, linear, nearest-filtered and unmipped so a
+    # border texel can never blend into a third country's ID.
+    countries = import_texture("T_Earth_CountryID.png", "T_Earth_CountryID", False, unreal.TextureCompressionSettings.TC_GRAYSCALE)
+    countries.set_editor_property("filter", unreal.TextureFilter.TF_NEAREST)
+    countries.set_editor_property("mip_gen_settings", unreal.TextureMipGenSettings.TMGS_NO_MIPMAPS)
+    EAL.save_loaded_asset(countries)
     black = unreal.load_asset(BLACK)
     if not black:
         raise RuntimeError("Missing engine texture " + BLACK)
 
-    build_surface(day, night, normal, masks, black)
+    build_surface(day, night, normal, masks, countries, black)
     build_clouds(black)
     build_atmosphere()
     build_space(sky)

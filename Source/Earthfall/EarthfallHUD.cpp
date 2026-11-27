@@ -120,6 +120,12 @@ bool AEarthfallHUD::HandleClick(const FVector2D& ScreenPosition, AEarthOrbitPawn
 		case EButton::MultiplierUp:
 			Pawn->AdjustMultiplier(static_cast<EEarthfallMultiplier>(Entry.Value), 1);
 			break;
+		case EButton::CycleHud:
+			Pawn->CycleHudMode();
+			break;
+		case EButton::ToggleInspect:
+			Pawn->ToggleInspectMode();
+			break;
 		}
 		return true;
 	}
@@ -148,11 +154,27 @@ void AEarthfallHUD::DrawHUD()
 	bCursorValid = PlayerOwner && PlayerOwner->GetMousePosition(CursorX, CursorY);
 	Cursor = FVector2D(CursorX, CursorY);
 
-	Text(TEXT("E A R T H F A L L"), Px(Margin), Px(24.0f), 30.0f, Cyan, EFace::Bold);
-	Text(TEXT("ORBITAL STRIKE SIMULATOR"), Px(Margin + 2.0f), Px(62.0f), 12.0f, Dim);
-
 	const AEarthOrbitPawn* Pawn = Cast<AEarthOrbitPawn>(PlayerOwner ? PlayerOwner->GetPawn() : nullptr);
 	if (!Pawn) return;
+
+	// The eye button survives every mode, so the HUD can always be brought back.
+	DrawEyeButton(Pawn);
+	const EEarthfallHudMode Mode = Pawn->GetHudMode();
+	if (Mode == EEarthfallHudMode::Hidden) return;
+	if (Mode == EEarthfallHudMode::TickerOnly)
+	{
+		FString CinemaTicker = FEarthfallTelemetry().LatestDispatch;
+		if (const UWorld* World = GetWorld())
+		{
+			if (const UEarthfallPopulationSubsystem* Population = World->GetSubsystem<UEarthfallPopulationSubsystem>()) CinemaTicker = Population->GetDispatchTicker();
+		}
+		DrawDispatchTicker(CinemaTicker, W, H);
+		return;
+	}
+
+	Text(TEXT("E A R T H F A L L"), Px(Margin + 34.0f), Px(24.0f), 30.0f, Cyan, EFace::Bold);
+	Text(TEXT("ORBITAL STRIKE SIMULATOR"), Px(Margin + 36.0f), Px(62.0f), 12.0f, Dim);
+	DrawInspectButton(Pawn);
 
 	FEarthfallTelemetry Telemetry;
 	FString Ticker = Telemetry.LatestDispatch;
@@ -166,10 +188,11 @@ void AEarthfallHUD::DrawHUD()
 	}
 
 	DrawStatusPanel(Telemetry, Pawn);
+	DrawCountryDossier(Pawn);
 	DrawArsenalPanel(Pawn, W);
 	DrawReticle(Pawn, W, H);
 
-	Text(TEXT("RMB DRAG  ORBIT      WHEEL  ZOOM      LMB  LAUNCH      1-6  WEAPON      Q/E  YIELD      A/D  RADIUS      Z/C  FALLOUT      R  RESET"),
+	Text(TEXT("RMB DRAG  ORBIT     WHEEL  ZOOM     LMB  LAUNCH     1-6  WEAPON     Q/E  YIELD     A/D  RADIUS     Z/C  FALLOUT     TAB  INSPECT     H  HUD     R  RESET"),
 		W * 0.5f, H - Px(TickerHeight + 28.0f), 11.5f, Dim, EFace::Regular, EAlign::Center);
 	DrawDispatchTicker(Ticker, W, H);
 
@@ -327,6 +350,11 @@ void AEarthfallHUD::DrawReticle(const AEarthOrbitPawn* Pawn, float ScreenWidth, 
 		Text(TEXT("NO SURFACE LOCK"), Cursor.X + Px(20.0f), Cursor.Y + Px(14.0f), 11.5f, Dim);
 		return;
 	}
+	if (Pawn->IsInspectMode())
+	{
+		Text(TEXT("INSPECT  //  CLICK A COUNTRY"), Cursor.X + Px(20.0f), Cursor.Y + Px(14.0f), 11.5f, Cyan, EFace::Mono);
+		return;
+	}
 	const FVector Direction = Pawn->GetAimHit().ImpactPoint.GetSafeNormal();
 	const double Latitude = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(Direction.Z, -1.0, 1.0)));
 	const double Longitude = FMath::RadiansToDegrees(FMath::Atan2(-Direction.Y, Direction.X));
@@ -364,4 +392,100 @@ void AEarthfallHUD::DrawDispatchTicker(const FString& String, float ScreenWidth,
 	const float Time = World ? World->GetTimeSeconds() : 0.0f;
 	const float Offset = FMath::Fmod(Time * Px(110.0f), TextWidth + ScreenWidth);
 	Text(String, ScreenWidth - Offset, TextY, Points, TickerColor, EFace::Bold);
+}
+
+void AEarthfallHUD::DrawEyeButton(const AEarthOrbitPawn* Pawn)
+{
+	const float Size = Px(28.0f);
+	const float X = Px(Margin);
+	const float Y = Px(28.0f);
+	const bool bHudHidden = Pawn->GetHudMode() == EEarthfallHudMode::Hidden;
+	const bool bHovered = Button(X, Y, Size, Size, EButton::CycleHud, 0);
+	Fill(X, Y, Size, Size, bHovered ? FLinearColor(0.30f, 0.82f, 1.0f, 0.40f) : FLinearColor(0.010f, 0.020f, 0.038f, bHudHidden ? 0.35f : 0.74f));
+
+	// An eye drawn as two arcs and a pupil; it dims when the HUD is hidden.
+	const FLinearColor Ink = bHudHidden ? FLinearColor(0.52f, 0.61f, 0.72f, 0.65f) : Cyan;
+	const FVector2D Center(X + Size * 0.5f, Y + Size * 0.5f);
+	const float HalfWidth = Size * 0.36f;
+	const float HalfHeight = Size * 0.20f;
+	constexpr int32 Segments = 10;
+	for (int32 Index = 0; Index < Segments; ++Index)
+	{
+		const float T0 = static_cast<float>(Index) / Segments;
+		const float T1 = static_cast<float>(Index + 1) / Segments;
+		const float X0 = Center.X - HalfWidth + 2.0f * HalfWidth * T0;
+		const float X1 = Center.X - HalfWidth + 2.0f * HalfWidth * T1;
+		const float Y0 = HalfHeight * FMath::Sin(T0 * PI);
+		const float Y1 = HalfHeight * FMath::Sin(T1 * PI);
+		DrawLine(X0, Center.Y - Y0, X1, Center.Y - Y1, Ink, FMath::Max(Px(1.5f), 1.0f));
+		DrawLine(X0, Center.Y + Y0, X1, Center.Y + Y1, Ink, FMath::Max(Px(1.5f), 1.0f));
+	}
+	const float Pupil = Size * 0.14f;
+	Fill(Center.X - Pupil * 0.5f, Center.Y - Pupil * 0.5f, Pupil, Pupil, Ink);
+	if (Pawn->GetHudMode() != EEarthfallHudMode::Full)
+	{
+		// A strike-through says the HUD is reduced; H or a click restores it.
+		DrawLine(X + Size * 0.18f, Y + Size * 0.82f, X + Size * 0.82f, Y + Size * 0.18f, Ink, FMath::Max(Px(1.5f), 1.0f));
+	}
+}
+
+void AEarthfallHUD::DrawInspectButton(const AEarthOrbitPawn* Pawn)
+{
+	const float Width = Px(150.0f);
+	const float Height = Px(22.0f);
+	const float X = Px(Margin + 250.0f);
+	const float Y = Px(60.0f);
+	const bool bActive = Pawn->IsInspectMode();
+	const bool bHovered = Button(X, Y, Width, Height, EButton::ToggleInspect, 0);
+	Fill(X, Y, Width, Height, bActive ? FLinearColor(0.30f, 0.82f, 1.0f, 0.55f)
+		: (bHovered ? FLinearColor(0.30f, 0.82f, 1.0f, 0.30f) : TrackFill));
+	Text(bActive ? TEXT("INSPECTING  [TAB]") : TEXT("INSPECT  [TAB]"), X + Width * 0.5f, Y + Px(3.0f), 11.5f, White, EFace::Bold, EAlign::Center);
+}
+
+void AEarthfallHUD::DrawCountryDossier(const AEarthOrbitPawn* Pawn)
+{
+	if (!Pawn->IsInspectMode()) return;
+	const UWorld* World = GetWorld();
+	const UEarthfallPopulationSubsystem* Population = World ? World->GetSubsystem<UEarthfallPopulationSubsystem>() : nullptr;
+	if (!Population) return;
+
+	const float X = Px(Margin);
+	const float Y = Px(462.0f);
+	const float Width = Px(400.0f);
+	const float RowHeight = Px(27.0f);
+	FEarthfallCountryStats Stats;
+	if (!Population->GetCountryStats(Pawn->GetInspectedCountry(), Stats))
+	{
+		Panel(X, Y, Width, Px(74.0f), TEXT("COUNTRY DOSSIER"));
+		Text(TEXT("Click any nation to open its dossier."), X + Px(14.0f), Y + Px(40.0f), 13.0f, Dim);
+		return;
+	}
+
+	Panel(X, Y, Width, Px(72.0f) + RowHeight * 7 + Px(10.0f), TEXT("COUNTRY DOSSIER"));
+	Text(Stats.Name.ToUpper(), X + Px(14.0f), Y + Px(34.0f), 19.0f, White, EFace::Bold);
+	float RowY = Y + Px(70.0f);
+	const float LabelX = X + Px(14.0f);
+	const float ValueX = X + Width - Px(14.0f);
+	auto Row = [&](const TCHAR* Label, const FString& Value, const FLinearColor& Color, float BarFraction = -1.0f)
+	{
+		Text(Label, LabelX, RowY, 13.0f, Dim);
+		if (BarFraction >= 0.0f) Bar(X + Px(190.0f), RowY + Px(7.0f), Px(110.0f), Px(6.0f), BarFraction, Color);
+		Text(Value, ValueX, RowY - Px(1.0f), 14.0f, Color, EFace::Mono, EAlign::Right);
+		RowY += RowHeight;
+	};
+
+	const double CasualtyFraction = Stats.InitialPopulation > 0.0 ? Stats.Casualties / Stats.InitialPopulation : 0.0;
+	Row(TEXT("POPULATION"), FormatPeople(Stats.LivingPopulation), White);
+	Row(TEXT("CASUALTIES"), FString::Printf(TEXT("%s  (%.1f%%)"), *FormatPeople(Stats.Casualties), CasualtyFraction * 100.0),
+		Stats.Casualties >= 1.0 ? Red : White);
+	Row(TEXT("REFUGEES"), FormatPeople(Stats.Displaced), Stats.Displaced >= 1.0 ? Orange : White);
+	const float Grid = Stats.GridPercent / 100.0f;
+	Row(TEXT("POWER GRID"), FString::Printf(TEXT("%.0f %%"), Stats.GridPercent),
+		FMath::Lerp(Red, Green, FMath::Clamp(Grid, 0.0f, 1.0f)), Grid);
+	Row(TEXT("GRID CAPACITY"), FString::Printf(TEXT("%.1f GW"), Stats.GridCapacityGW * Grid), White);
+	Row(TEXT("DEFENSE READINESS"), FString::Printf(TEXT("%.0f / 100"), Stats.DefenseReadiness * (1.0f - static_cast<float>(CasualtyFraction))),
+		White, Stats.DefenseReadiness / 100.0f * (1.0f - static_cast<float>(CasualtyFraction)));
+	static const FLinearColor StabilityColors[] = {Green, Orange, Red, FLinearColor(0.75f, 0.20f, 0.95f, 1.0f)};
+	Row(TEXT("GOVERNMENT"), UEarthfallPopulationSubsystem::StabilityLabel(Stats.Stability),
+		StabilityColors[static_cast<int32>(Stats.Stability)]);
 }

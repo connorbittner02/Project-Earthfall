@@ -4,7 +4,7 @@
 // atmosphere health 0..1, sunglint gain).
 float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist,
             float3 DayTex, float3 NightTex, float3 NormalTex, float3 MasksTex,
-            float3 Mask, float3 Ash, float3 Sun, float Time, float4 CloudLayer, float4 Tuning,
+            float3 Mask, float3 Ash, float CountryId, float4 Inspect, float3 Sun, float Time, float4 CloudLayer, float4 Tuning,
             float4 A0, float4 B0, float4 C0, float4 A1, float4 B1, float4 C1,
             float4 A2, float4 B2, float4 C2, float4 A3, float4 B3, float4 C3)
 {
@@ -116,6 +116,13 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
 
     // --- Fallout: a faint sickly shimmer where radioactive ash is settling.
     emissive += float3(0.30, 0.55, 0.06) * fallout * 0.05 * (0.5 + 0.5 * night);
+
+    // --- Country Dossier highlight: a faint fill and a crisp border on the
+    // inspected nation. The ID texture is nearest-filtered, so fwidth() of the
+    // match is exactly the border.
+    float inspected = (1.0 - saturate(abs(CountryId * 255.0 - Inspect.x) * 2.0)) * Inspect.y;
+    float border = saturate(fwidth(inspected) * 1.5);
+    emissive += float3(0.30, 0.82, 1.00) * (inspected * 0.07 + border * 0.9) * Inspect.y;
 
     return lit + emissive;
 }

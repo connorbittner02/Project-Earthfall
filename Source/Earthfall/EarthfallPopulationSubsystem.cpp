@@ -1,10 +1,26 @@
 #include "EarthfallPopulationSubsystem.h"
 #include "EarthfallTypes.h"
+#include "HAL/FileManager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "Stats/Stats.h"
 
 namespace
 {
 constexpr double EarthRadiusKm = 6371.0;
+
+struct FCountryRecord
+{
+	const TCHAR* Name;
+	double Population;
+	float GridCapacityGW;
+	float DefenseReadiness;
+};
+
+// Natural Earth 1:50m admin-0 countries; index is the ID stored in the mask.
+const FCountryRecord GCountryTable[] = {
+#include "EarthfallCountryTable.inl"
+};
 
 FVector DirectionFromRadians(double Latitude, double Longitude)
 {
@@ -24,6 +40,7 @@ FString FormatPeople(double Count)
 void UEarthfallPopulationSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+	LoadCountryGrid();
 	BuildCityAnchors();
 	ResetSimulation();
 }
@@ -234,12 +251,54 @@ void UEarthfallPopulationSubsystem::RefreshPopulationTotals()
 	double LivingTotal = 0.0;
 	double DisplacedTotal = 0.0;
 	GridPowerSum = 0.0f;
-	for (const FEarthfallPopulationCell& Cell : Cells)
+	for (FCountryState& State : CountryStates)
 	{
-		LivingTotal += Cell.LivingPopulation;
+		State.LivingPopulation = 0.0;
+		State.Displaced = 0.0;
+		State.GridSum = 0.0f;
+	}
+	const bool bTallyCountries = CellCountry.Num() == Cells.Num() && !CountryStates.IsEmpty();
+	for (int32 Index = 0; Index < Cells.Num(); ++Index)
+	{
+		const FEarthfallPopulationCell& Cell = Cells[Index];
 		// A cell can never report more displaced survivors than it has living ones.
-		DisplacedTotal += FMath::Min(Cell.DisplacedPopulation, Cell.LivingPopulation);
+		const double Displaced = FMath::Min(Cell.DisplacedPopulation, Cell.LivingPopulation);
+		LivingTotal += Cell.LivingPopulation;
+		DisplacedTotal += Displaced;
 		GridPowerSum += Cell.PowerGridHealth;
+		if (bTallyCountries)
+		{
+			FCountryState& State = CountryStates[CellCountry[Index]];
+			State.LivingPopulation += Cell.LivingPopulation;
+			State.Displaced += Displaced;
+			State.GridSum += Cell.PowerGridHealth;
+		}
+	}
+
+	// Governments degrade with deaths, refugees and blackout; each step down is news.
+	for (int32 Id = 1; Id < CountryStates.Num(); ++Id)
+	{
+		FCountryState& State = CountryStates[Id];
+		if (State.InitialPopulation <= 0.0 || State.CellCount == 0) continue;
+		const double CasualtyFraction = 1.0 - State.LivingPopulation / State.InitialPopulation;
+		const double RefugeeFraction = State.Displaced / State.InitialPopulation;
+		const double Blackout = 1.0 - State.GridSum / State.CellCount;
+		const double Stress = CasualtyFraction + 0.35 * RefugeeFraction + 0.25 * Blackout;
+		const EEarthfallStability Next = Stress < 0.03 ? EEarthfallStability::Stable
+			: (Stress < 0.15 ? EEarthfallStability::Emergency
+			: (Stress < 0.40 ? EEarthfallStability::MartialLaw : EEarthfallStability::Collapsed));
+		if (Next > State.Stability)
+		{
+			State.Stability = Next;
+			// Micro-states would flood the ticker, so only nations over a million report.
+			if (State.InitialPopulation >= 1.0e6)
+			{
+				EnqueueNews(FString::Printf(TEXT("[%s \u00B7 %s] %s casualties  //  %s refugees  //  %.0f%% of grid online"),
+					StabilityLabel(Next), *FString(GCountryTable[Id].Name).ToUpper(),
+					*FormatPeople(State.InitialPopulation - State.LivingPopulation), *FormatPeople(State.Displaced),
+					(1.0 - Blackout) * 100.0), 3 + static_cast<int32>(Next));
+			}
+		}
 	}
 	Telemetry.LivingPopulation = FMath::Max(0.0, LivingTotal);
 	Telemetry.DisplacedPopulation = FMath::Max(0.0, DisplacedTotal);
@@ -359,13 +418,35 @@ void UEarthfallPopulationSubsystem::SeedPopulation()
 		}
 	}
 
+	// Each nation's Natural Earth population is spread over that nation's own
+	// cells by the density weights above, so nobody lives in the open ocean and
+	// per-country tallies add up. The world total is scaled to InitialPopulation.
+	const int32 CountryCount = UE_ARRAY_COUNT(GCountryTable);
+	TArray<double> CountryWeight;
+	CountryWeight.SetNumZeroed(CountryCount);
+	for (int32 Index = 0; Index < Cells.Num(); ++Index) CountryWeight[CellCountry[Index]] += Weights[Index];
+	double PlacedPopulation = 0.0;
+	for (int32 Id = 1; Id < CountryCount; ++Id)
+	{
+		if (CountryWeight[Id] > 0.0) PlacedPopulation += GCountryTable[Id].Population;
+	}
+	const bool bHaveCountries = PlacedPopulation > 0.0;
+	const double WorldScale = bHaveCountries ? InitialPopulation / PlacedPopulation : 1.0;
+
 	GridPowerSum = 0.0f;
 	for (int32 Index = 0; Index < Cells.Num(); ++Index)
 	{
 		FEarthfallPopulationCell& Cell = Cells[Index];
-		Cell.LivingPopulation = TotalWeight > 0.0
-			? InitialPopulation * Weights[Index] / TotalWeight
-			: InitialPopulation / Cells.Num();
+		const int32 Id = CellCountry[Index];
+		if (bHaveCountries)
+		{
+			Cell.LivingPopulation = Id > 0 && CountryWeight[Id] > 0.0
+				? GCountryTable[Id].Population * WorldScale * Weights[Index] / CountryWeight[Id] : 0.0;
+		}
+		else
+		{
+			Cell.LivingPopulation = TotalWeight > 0.0 ? InitialPopulation * Weights[Index] / TotalWeight : InitialPopulation / Cells.Num();
+		}
 		Cell.DisplacedPopulation = 0.0;
 		Cell.PowerGridHealth = 1.0f;
 		Cell.HazardHeat = 0.0f;
@@ -373,6 +454,17 @@ void UEarthfallPopulationSubsystem::SeedPopulation()
 		// of washing the entire globe with the low-density population background.
 		Cell.CityLightPotential = FMath::Clamp((FMath::Loge(1.0 + Cell.LivingPopulation) - 12.0) / 3.2, 0.0, 1.0);
 		GridPowerSum += 1.0f;
+	}
+
+	CountryStates.Reset();
+	CountryStates.SetNum(CountryCount);
+	for (int32 Index = 0; Index < Cells.Num(); ++Index)
+	{
+		FCountryState& State = CountryStates[CellCountry[Index]];
+		State.InitialPopulation += Cells[Index].LivingPopulation;
+		State.LivingPopulation += Cells[Index].LivingPopulation;
+		State.GridSum += 1.0f;
+		++State.CellCount;
 	}
 }
 
@@ -590,4 +682,80 @@ float UEarthfallPopulationSubsystem::GetCityLightAtDirection(const FVector& Loca
 	if (Cells.IsEmpty()) return 0.0f;
 	const FEarthfallPopulationCell& Cell = Cells[GetCellIndex(LocalDirection)];
 	return FMath::Clamp(Cell.CityLightPotential * Cell.PowerGridHealth, 0.0f, 1.0f);
+}
+
+// ---------------------------------------------------------------------------
+// Countries
+// ---------------------------------------------------------------------------
+void UEarthfallPopulationSubsystem::LoadCountryGrid()
+{
+	const FString Path = FPaths::ProjectContentDir() / TEXT("Earth/Data/CountryID.bin");
+	if (!FFileHelper::LoadFileToArray(CountryGrid, *Path) || CountryGrid.Num() != CountryGridWidth * CountryGridHeight)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Earthfall: %s missing or malformed; countries disabled. Run Scripts/prepare_country_data.py."), *Path);
+		CountryGrid.Init(0, CountryGridWidth * CountryGridHeight);
+	}
+	// Each population cell takes the ID at its centre in the finer mask.
+	const int32 ScaleX = CountryGridWidth / GridWidth;
+	const int32 ScaleY = CountryGridHeight / GridHeight;
+	const int32 CountryCount = UE_ARRAY_COUNT(GCountryTable);
+	CellCountry.SetNumUninitialized(GridWidth * GridHeight);
+	for (int32 Y = 0; Y < GridHeight; ++Y)
+	{
+		for (int32 X = 0; X < GridWidth; ++X)
+		{
+			const uint8 Id = CountryGrid[(Y * ScaleY + ScaleY / 2) * CountryGridWidth + X * ScaleX + ScaleX / 2];
+			CellCountry[Y * GridWidth + X] = Id < CountryCount ? Id : 0;
+		}
+	}
+}
+
+int32 UEarthfallPopulationSubsystem::GetCountryAtDirection(const FVector& LocalDirection) const
+{
+	if (CountryGrid.IsEmpty()) return 0;
+	const FVector Direction = LocalDirection.GetSafeNormal();
+	const double U = (FMath::Atan2(-Direction.Y, Direction.X) + PI) / (2.0 * PI);
+	const double V = (PI * 0.5 - FMath::Asin(FMath::Clamp(Direction.Z, -1.0, 1.0))) / PI;
+	const int32 X = FMath::Clamp(FMath::FloorToInt(U * CountryGridWidth), 0, CountryGridWidth - 1);
+	const int32 Y = FMath::Clamp(FMath::FloorToInt(V * CountryGridHeight), 0, CountryGridHeight - 1);
+	const int32 Id = CountryGrid[Y * CountryGridWidth + X];
+	return Id < CountryStates.Num() ? Id : 0;
+}
+
+bool UEarthfallPopulationSubsystem::GetCountryStats(int32 CountryId, FEarthfallCountryStats& OutStats) const
+{
+	if (CountryId <= 0 || !CountryStates.IsValidIndex(CountryId)) return false;
+	const FCountryState& State = CountryStates[CountryId];
+	const FCountryRecord& Record = GCountryTable[CountryId];
+	OutStats.Id = CountryId;
+	OutStats.Name = Record.Name;
+	OutStats.InitialPopulation = State.InitialPopulation;
+	OutStats.LivingPopulation = State.LivingPopulation;
+	OutStats.Casualties = FMath::Max(0.0, State.InitialPopulation - State.LivingPopulation);
+	OutStats.Displaced = State.Displaced;
+	OutStats.GridPercent = State.CellCount > 0 ? State.GridSum / State.CellCount * 100.0f : 100.0f;
+	OutStats.GridCapacityGW = Record.GridCapacityGW;
+	OutStats.DefenseReadiness = Record.DefenseReadiness;
+	OutStats.Stability = State.Stability;
+	return true;
+}
+
+const TCHAR* UEarthfallPopulationSubsystem::StabilityLabel(EEarthfallStability Stability)
+{
+	switch (Stability)
+	{
+	case EEarthfallStability::Emergency: return TEXT("EMERGENCY");
+	case EEarthfallStability::MartialLaw: return TEXT("MARTIAL LAW");
+	case EEarthfallStability::Collapsed: return TEXT("COLLAPSED");
+	default: return TEXT("STABLE");
+	}
+}
+
+void UEarthfallPopulationSubsystem::AnnounceCountry(int32 CountryId)
+{
+	FEarthfallCountryStats Stats;
+	if (!GetCountryStats(CountryId, Stats)) return;
+	EnqueueNews(FString::Printf(TEXT("[DOSSIER \u00B7 %s] Population %s  //  %s casualties  //  %s refugees  //  grid %.0f%%  //  government %s"),
+		*Stats.Name.ToUpper(), *FormatPeople(Stats.LivingPopulation), *FormatPeople(Stats.Casualties),
+		*FormatPeople(Stats.Displaced), Stats.GridPercent, StabilityLabel(Stats.Stability)), 6);
 }

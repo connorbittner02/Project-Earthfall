@@ -37,6 +37,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Earthfall|Planet")
 	void ResetPlanet();
 
+	/** Outline and tint one nation (0 clears) for the Country Dossier. */
+	void SetHighlightedCountry(int32 CountryId);
+
 	/** Unit vector from the planet toward the Sun, in world space. */
 	FVector GetSunDirectionWorld() const;
 

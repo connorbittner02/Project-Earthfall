@@ -105,7 +105,15 @@ void AEarthfallCaptureDirector::BuildScript()
 	// Let the wind carry the plumes before the final wide shot.
 	At(28.2f, [=]() { View(-80.0f, 30.0f, 430.0f); });
 	At(46.0f, [this]() { Shot(TEXT("14-ash-drift")); });
-	At(47.5f, [this]() { Finish(); });
+	// Country Dossier for the nation that took the nuclear strike, then the HUD modes.
+	At(46.2f, [this]() { if (AEarthOrbitPawn* P = Pawn()) { P->SetOrbitView(-98.0f, 38.0f, 330.0f); P->InspectDirection(EarthfallSolar::DirectionFromLatLon(39.0, -98.0)); } });
+	At(47.4f, [this]() { Shot(TEXT("15-country-dossier")); });
+	At(47.5f, [this]() { if (AEarthOrbitPawn* P = Pawn()) P->SetHudMode(EEarthfallHudMode::TickerOnly); });
+	At(47.9f, [this]() { Shot(TEXT("16-hud-ticker-only")); });
+	At(48.0f, [this]() { if (AEarthOrbitPawn* P = Pawn()) P->SetHudMode(EEarthfallHudMode::Hidden); });
+	At(48.4f, [this]() { Shot(TEXT("17-hud-hidden")); });
+	At(48.5f, [this]() { if (AEarthOrbitPawn* P = Pawn()) { P->SetHudMode(EEarthfallHudMode::Full); P->ToggleInspectMode(); } });
+	At(49.0f, [this]() { Finish(); });
 
 	Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
 }

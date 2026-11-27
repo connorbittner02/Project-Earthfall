@@ -39,6 +39,30 @@ struct FEarthfallTelemetry
 	FString LatestDispatch = TEXT("GLOBAL NETWORKS NOMINAL  //  AWAITING FIRST STRIKE");
 };
 
+/** Government condition of one nation, worst last. */
+enum class EEarthfallStability : uint8
+{
+	Stable,
+	Emergency,
+	MartialLaw,
+	Collapsed
+};
+
+/** Live figures for one nation, as shown in the HUD's Country Dossier. */
+struct FEarthfallCountryStats
+{
+	int32 Id = 0;
+	FString Name;
+	double InitialPopulation = 0.0;
+	double LivingPopulation = 0.0;
+	double Casualties = 0.0;
+	double Displaced = 0.0;
+	float GridPercent = 100.0f;
+	float GridCapacityGW = 0.0f;
+	float DefenseReadiness = 0.0f;
+	EEarthfallStability Stability = EEarthfallStability::Stable;
+};
+
 struct FEarthfallPopulationCell
 {
 	double LivingPopulation = 0.0;
@@ -94,6 +118,14 @@ public:
 	/** Every dispatch still on air, joined for the HUD ticker. Highest priority first. */
 	FString GetDispatchTicker() const;
 
+	/** Country ID (0 = open ocean) under a planet-local direction, from the Natural Earth mask. */
+	int32 GetCountryAtDirection(const FVector& LocalDirection) const;
+	int32 GetCountryCount() const { return CountryStates.Num(); }
+	bool GetCountryStats(int32 CountryId, FEarthfallCountryStats& OutStats) const;
+	/** Push a headline summarising one nation onto the news bar. */
+	void AnnounceCountry(int32 CountryId);
+	static const TCHAR* StabilityLabel(EEarthfallStability Stability);
+
 	/** Simulation clock shared with the ash advection shader so both use the same wind. */
 	double GetWindTime() const { return WindTime; }
 
@@ -129,6 +161,24 @@ private:
 	static constexpr float PlumeSpreadRadiansPerSecond = 0.004f;
 	static constexpr float FalloutDoseInterval = 0.5f;
 
+	static constexpr int32 CountryGridWidth = 1024;
+	static constexpr int32 CountryGridHeight = 512;
+
+	struct FCountryState
+	{
+		double InitialPopulation = 0.0;
+		double LivingPopulation = 0.0;
+		double Displaced = 0.0;
+		float GridSum = 0.0f;
+		int32 CellCount = 0;
+		EEarthfallStability Stability = EEarthfallStability::Stable;
+	};
+
+	/** 1024x512 country IDs loaded from Content/Earth/Data/CountryID.bin. */
+	TArray<uint8> CountryGrid;
+	/** Country ID of each population cell. */
+	TArray<uint8> CellCountry;
+	TArray<FCountryState> CountryStates;
 	TArray<FEarthfallPopulationCell> Cells;
 	TArray<FCityAnchor> Cities;
 	TArray<FEarthfallNewsEvent> NewsQueue;
@@ -144,6 +194,7 @@ private:
 	float FalloutNewsTimer = 0.0f;
 	double FalloutCasualtiesSinceNews = 0.0;
 
+	void LoadCountryGrid();
 	void BuildCityAnchors();
 	void SeedPopulation();
 	int32 GetCellIndex(const FVector& LocalDirection) const;
