@@ -389,7 +389,7 @@ void AEarthOrbitPawn::UpdateAimState()
 	bAimOnPlanet = false;
 	AimHit = FHitResult();
 	APlayerController* PC = Cast<APlayerController>(GetController());
-	if (!PC || !GetWorld()) return;
+	if (!PC || !GetWorld() || !bAimEnabled) return;
 	FVector Start;
 	FVector Direction;
 	if (!PC->DeprojectMousePositionToWorld(Start, Direction)) return;

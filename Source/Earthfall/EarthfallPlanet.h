@@ -79,11 +79,32 @@ private:
 	TObjectPtr<UMaterialInterface> AtmosphereMaterial;
 	UPROPERTY()
 	TObjectPtr<UMaterialInterface> AshAdvectionMaterial;
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> TsunamiStepMaterial;
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> FireStepMaterial;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UTextureRenderTarget2D> ImpactMaskRT;
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UTextureRenderTarget2D>> AshPlumeRTs;
+	/** Ping-pong wave field: R height, G velocity, B coastal inundation. */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTextureRenderTarget2D>> TsunamiRTs;
+	/** Ping-pong wildfire automaton: R fire, G burn scar. */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTextureRenderTarget2D>> FireRTs;
+	/** Crater height field for parallax occlusion: R bowl depth, G rim and rays. */
+	UPROPERTY(Transient)
+	TObjectPtr<UTextureRenderTarget2D> CraterRT;
+	UPROPERTY(Transient)
+	TObjectPtr<UTexture2D> CraterStampTexture;
+	UPROPERTY(Transient)
+	TObjectPtr<UTexture2D> FireRingStampTexture;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> TsunamiStepMID;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> FireStepMID;
 	UPROPERTY(Transient)
 	TObjectPtr<UTexture2D> ScorchStampTexture;
 	UPROPERTY(Transient)
@@ -155,6 +176,12 @@ private:
 	float AshActiveSeconds = 0.0f;
 	float EnvironmentAccumulator = 0.0f;
 	int32 AshReadIndex = 0;
+	int32 TsunamiReadIndex = 0;
+	int32 FireReadIndex = 0;
+	float TsunamiStepAccumulator = 0.0f;
+	float TsunamiActiveSeconds = 0.0f;
+	float FireStepAccumulator = 0.0f;
+	float FireActiveSeconds = 0.0f;
 
 	void CreateMaterialInstances();
 	void BuildSphereTopology();
@@ -162,7 +189,14 @@ private:
 	void BuildShell(UProceduralMeshComponent* Shell, float RadiusScale, UMaterialInstanceDynamic* Material, int32 SortPriority);
 	void BuildImpactMaskResources();
 	void BuildAshPlumeResources();
-	UTexture2D* CreateStampTexture(TFunctionRef<FColor(float)> Evaluate) const;
+	/** Evaluate receives (distance from centre 0..1+, angle in radians). */
+	UTexture2D* CreateStampTexture(TFunctionRef<FColor(float, float)> Evaluate, int32 Size = 128) const;
+	UTextureRenderTarget2D* CreateFloatTarget(const TCHAR* Name, int32 Width, int32 Height, bool bFullFloat = false);
+	void BuildWaveFireAndCraterResources();
+	void StampInto(UTextureRenderTarget2D* Target, UTexture2D* Texture, const FVector& LocalDirection, float AngularRadius, const FLinearColor& Tint);
+	void BindSimulationTextures();
+	void StepTsunami();
+	void StepFire(float StepSeconds);
 	void DrawStamp(UCanvas* Canvas, const FVector2D& CanvasSize, UTexture2D* Texture,
 		const FVector& Direction, float AngularRadius, const FLinearColor& Tint) const;
 	void RedrawImpactMask();

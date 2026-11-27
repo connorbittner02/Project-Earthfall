@@ -66,6 +66,7 @@ void AEarthfallCaptureDirector::BuildScript()
 
 	// The shot list assumes -EarthfallSunLon=-60 -EarthfallSunLat=10: the Americas
 	// in daylight, Asia in darkness and the terminator over Africa and Europe.
+	At(0.0f, [this]() { if (AEarthOrbitPawn* P = Pawn()) P->SetAimEnabled(false); });
 	At(0.0f, [=]() { View(-85.0f, 22.0f, 420.0f); });
 	At(2.5f, [this]() { Shot(TEXT("01-earth-day")); });
 
@@ -113,7 +114,21 @@ void AEarthfallCaptureDirector::BuildScript()
 	At(48.0f, [this]() { if (AEarthOrbitPawn* P = Pawn()) P->SetHudMode(EEarthfallHudMode::Hidden); });
 	At(48.4f, [this]() { Shot(TEXT("17-hud-hidden")); });
 	At(48.5f, [this]() { if (AEarthOrbitPawn* P = Pawn()) { P->SetHudMode(EEarthfallHudMode::Full); P->ToggleInspectMode(); } });
-	At(49.0f, [this]() { Finish(); });
+	// A cryo impactor (the asteroid) into the Bay of Bengal on the night side: the
+	// wave should cross to the lit coasts of India, Bangladesh and Myanmar.
+	At(49.0f, [=]() { View(86.0f, 14.0f, 235.0f); Weapon(4, EarthfallMultipliers::DefaultIndex); });
+	At(49.3f, [=]() { Fire(11.0, 88.5); });
+	At(52.0f, [this]() { Shot(TEXT("18-tsunami-crest")); });
+	At(54.6f, [this]() { Shot(TEXT("19-tsunami-landfall-blackout")); });
+
+	// Wildfires spreading from the nuclear strike's rim, with their smoke.
+	At(54.8f, [=]() { View(-96.0f, 37.0f, 230.0f); });
+	At(56.6f, [this]() { Shot(TEXT("20-wildfire-smoke")); });
+
+	// The mantle crater in daylight, off-centre so parallax depth and rim shadow read.
+	At(56.8f, [=]() { View(-36.0f, -12.0f, 215.0f); });
+	At(58.6f, [this]() { Shot(TEXT("21-pom-crater")); });
+	At(59.8f, [this]() { Finish(); });
 
 	Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
 }

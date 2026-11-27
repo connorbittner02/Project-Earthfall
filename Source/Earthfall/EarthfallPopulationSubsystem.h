@@ -15,6 +15,9 @@ struct FEarthfallTelemetry
 	double TotalCasualties = 0.0;
 	UPROPERTY()
 	double DisplacedPopulation = 0.0;
+	/** Subset of TotalCasualties drowned by tsunami landfall. */
+	UPROPERTY()
+	double TsunamiCasualties = 0.0;
 	/** Subset of TotalCasualties killed by drifting radioactive fallout rather than blast. */
 	UPROPERTY()
 	double FalloutCasualties = 0.0;
@@ -118,6 +121,12 @@ public:
 	/** Every dispatch still on air, joined for the HUD ticker. Highest priority first. */
 	FString GetDispatchTicker() const;
 
+	/** Angular speed of a tsunami front in radians per second. Shared with M_TsunamiStep. */
+	static constexpr float TsunamiSpeed = 0.16f;
+
+	/** Start a tsunami at an ocean impact; it trips coastal grids as its front arrives. */
+	void AddTsunami(const FVector& LocalDirection, float Amplitude);
+
 	/** Country ID (0 = open ocean) under a planet-local direction, from the Natural Earth mask. */
 	int32 GetCountryAtDirection(const FVector& LocalDirection) const;
 	int32 GetCountryCount() const { return CountryStates.Num(); }
@@ -179,6 +188,21 @@ private:
 	/** Country ID of each population cell. */
 	TArray<uint8> CellCountry;
 	TArray<FCountryState> CountryStates;
+	struct FTsunami
+	{
+		FVector Direction = FVector::ForwardVector;
+		float Radius = 0.0f;
+		float Amplitude = 1.0f;
+		TArray<uint8> LandfallCountries;
+	};
+	struct FCoastalCell
+	{
+		int32 Index = 0;
+		FVector Direction = FVector::ForwardVector;
+	};
+	TArray<FTsunami> Tsunamis;
+	/** Land cells within two cells of open water: the only ones a tsunami can reach. */
+	TArray<FCoastalCell> CoastalCells;
 	TArray<FEarthfallPopulationCell> Cells;
 	TArray<FCityAnchor> Cities;
 	TArray<FEarthfallNewsEvent> NewsQueue;
@@ -202,6 +226,7 @@ private:
 	void EnqueueNews(const FString& Text, int32 Priority);
 	void AdvanceDispatches(float DeltaTime);
 	void AdvancePlumes(float DeltaTime);
+	void AdvanceTsunamis(float DeltaTime);
 	void ApplyFalloutDose(float DeltaTime);
 	void RecoverEnvironment(float DeltaTime);
 	void RefreshPopulationTotals();

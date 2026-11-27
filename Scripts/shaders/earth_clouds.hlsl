@@ -2,12 +2,13 @@
 // exactly 0 opacity, so the layer can never film the oceans. Layer = (seed,
 // threshold, zonal stretch, drift). Look = (opacity scale, self-shadow strength,
 // ash visibility, sun intensity).
-float4 Main(float3 LocalPos, float3 Mask, float3 Ash, float3 Sun, float Time,
+float4 Main(float3 LocalPos, float2 UV, float3 Mask, Texture2D AshTex, SamplerState AshTexSampler, float3 Sun, float Time,
             float4 Layer, float4 Look,
             float4 A0, float4 B0, float4 C0, float4 A1, float4 B1, float4 C1,
             float4 A2, float4 B2, float4 C2, float4 A3, float4 B3, float4 C3)
 {
     float3 n = normalize(LocalPos);
+    float3 Ash = Texture2DSampleLevel(AshTex, AshTexSampler, UV, 0).rgb;
 
     // Shockwaves shove the weather outward and leave a condensation front.
     float ring = 0.0;
@@ -35,7 +36,11 @@ float4 Main(float3 LocalPos, float3 Mask, float3 Ash, float3 Sun, float Time,
     float towardSun = density;
     if (Look.y >= 1.0)
     {
-        towardSun = CloudField(normalize(ns + sunTangent * 0.020), Time, Layer, 4) * (1.0 - cleared);
+        // Three steps toward the sun: near steps carve relief into each cloud,
+        // the far step lets storm walls shadow the deck behind them.
+        towardSun = (CloudField(normalize(ns + sunTangent * 0.012), Time, Layer, 3)
+                   + CloudField(normalize(ns + sunTangent * 0.026), Time, Layer, 3)
+                   + CloudField(normalize(ns + sunTangent * 0.045), Time, Layer, 3)) * 0.55 * (1.0 - cleared);
     }
     float shade = exp(-towardSun * Look.y);
 
@@ -45,6 +50,18 @@ float4 Main(float3 LocalPos, float3 Mask, float3 Ash, float3 Sun, float Time,
                               + float3(0.10, 0.16, 0.28) * 0.55 * day
                               + float3(0.004, 0.006, 0.012));
     cloudCol *= lerp(0.80, 1.0, density);
+
+    // Towering ash plumes shadow the cloud deck: three samples toward the sun.
+    float3 east = normalize(cross(n, float3(0.0, 0.0, 1.0)) + float3(0.0, 1e-5, 0.0));
+    float3 north = cross(east, n);
+    float cosLat = max(sqrt(saturate(1.0 - n.z * n.z)), 0.15);
+    float2 sunUV = float2(dot(Sun, east) / (6.2831853 * cosLat), -dot(Sun, north) / 3.14159265);
+    float plumeShadow = 0.0;
+    for (int ps = 1; ps <= 3; ps++)
+    {
+        plumeShadow = max(plumeShadow, Texture2DSampleLevel(AshTex, AshTexSampler, UV + sunUV * (ps * 0.016), 0).r);
+    }
+    cloudCol *= 1.0 - 0.55 * pow(saturate(plumeShadow), 0.7);
     // Semi-transparent vapour: feathered edges ramp to 0.45, and even the
     // thickest cores stop at 0.78 so ocean and land read through.
     float cloudAlpha = 0.45 * smoothstep(0.0, 0.50, density) + 0.33 * smoothstep(0.45, 1.0, density);

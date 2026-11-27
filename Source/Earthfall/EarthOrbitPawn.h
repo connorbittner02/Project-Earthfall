@@ -49,6 +49,7 @@ public:
 	float GetOrbitDistance() const { return Distance; }
 	EEarthfallHudMode GetHudMode() const { return HudMode; }
 	bool IsInspectMode() const { return bInspectMode; }
+	bool IsAimEnabled() const { return bAimEnabled; }
 	int32 GetInspectedCountry() const { return InspectedCountry; }
 
 	// --- Driven by input, HUD buttons and the capture director.
@@ -56,6 +57,8 @@ public:
 	void AdjustMultiplier(EEarthfallMultiplier Kind, int32 Delta);
 	void SetMultiplierIndex(EEarthfallMultiplier Kind, int32 Index);
 	void ResetSimulation();
+	/** Scripted captures turn the mouse aim off so a stray cursor draws no reticle or ring. */
+	void SetAimEnabled(bool bEnabled) { bAimEnabled = bEnabled; }
 	void CycleHudMode();
 	void SetHudMode(EEarthfallHudMode Mode) { HudMode = Mode; }
 	/** In inspect mode a click opens a nation's dossier instead of launching. */
@@ -115,6 +118,7 @@ private:
 	bool bAimOnPlanet = false;
 	bool bLaunchFromRight = true;
 	bool bInspectMode = false;
+	bool bAimEnabled = true;
 	int32 InspectedCountry = 0;
 	EEarthfallHudMode HudMode = EEarthfallHudMode::Full;
 

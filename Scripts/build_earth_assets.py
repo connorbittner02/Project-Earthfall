@@ -136,11 +136,13 @@ def constant4(material, value, y=0):
     return expression
 
 
-def texture_sample(material, name, texture, sampler, y=0):
+def texture_sample(material, name, texture, sampler, y=0, uv=None):
     expression = node(material, unreal.MaterialExpressionTextureSampleParameter2D, -900, y)
     expression.set_editor_property("parameter_name", name)
     expression.set_editor_property("texture", texture)
     expression.set_editor_property("sampler_type", sampler)
+    if uv is not None:
+        connect(uv, "", expression, "UVs")
     return expression
 
 
@@ -251,19 +253,37 @@ def build_surface(day, night, normal, masks, countries, black):
     camera_distance = node(material, unreal.MaterialExpressionDistance, -1100, -200)
     connect(node(material, unreal.MaterialExpressionCameraPositionWS, -1300, -240), "", camera_distance, "A")
     connect(node(material, unreal.MaterialExpressionWorldPosition, -1300, -160), "", camera_distance, "B")
+    # Parallax occlusion runs first; every surface lookup then uses the UV the view
+    # ray really lands on inside the crater height field.
+    position = local_position(material, -600)
+    view = local_vector(material, unreal.MaterialExpressionCameraVectorWS, -400)
+    crater = texture_object(material, "CraterRT", black, 1650)
+    pom_parameters = vector_parameter(material, "Pom", (0.050, 0.020, 0.0, 0.0), 1700)
+    pom = custom(material, "earth_pom.hlsl", [
+        ("UV", node(material, unreal.MaterialExpressionTextureCoordinate, -1300, -700), ""),
+        ("LocalPos", position, ""),
+        ("ViewLocal", view, ""),
+        ("CraterTex", crater, ""),
+        ("Pom", pom_parameters, "RGBA"),
+    ], unreal.CustomMaterialOutputType.CMOT_FLOAT2)
     inputs = [
-        ("LocalPos", local_position(material, -600), ""),
+        ("LocalPos", position, ""),
         ("NormalLocal", local_vector(material, unreal.MaterialExpressionVertexNormalWS, -500), ""),
-        ("ViewLocal", local_vector(material, unreal.MaterialExpressionCameraVectorWS, -400), ""),
+        ("ViewLocal", view, ""),
         ("CamDist", camera_distance, ""),
-        ("DayTex", texture_sample(material, "DayTexture", day, color, -100), "RGB"),
-        ("NightTex", texture_sample(material, "NightTexture", night, color, 100), "RGB"),
-        ("NormalTex", texture_sample(material, "NormalTexture", normal, unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL, 300), "RGB"),
-        ("MasksTex", texture_sample(material, "MasksTexture", masks, unreal.MaterialSamplerType.SAMPLERTYPE_MASKS, 500), "RGB"),
-        ("Mask", texture_sample(material, "ImpactMaskRT", black, color, 700), "RGB"),
-        ("Ash", texture_sample(material, "AshPlumeRT", black, color, 900), "RGB"),
-        ("CountryId", texture_sample(material, "CountryIDTexture", countries, unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_GRAYSCALE, 1000), "R"),
+        ("DayTex", texture_sample(material, "DayTexture", day, color, -100, pom), "RGB"),
+        ("NightTex", texture_sample(material, "NightTexture", night, color, 100, pom), "RGB"),
+        ("NormalTex", texture_sample(material, "NormalTexture", normal, unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL, 300, pom), "RGB"),
+        ("MasksTex", texture_sample(material, "MasksTexture", masks, unreal.MaterialSamplerType.SAMPLERTYPE_MASKS, 500, pom), "RGB"),
+        ("Mask", texture_sample(material, "ImpactMaskRT", black, color, 700, pom), "RGB"),
+        ("PomUV", pom, ""),
+        ("AshTex", texture_object(material, "AshPlumeRT", black, 900), ""),
+        ("CraterTex", crater, ""),
+        ("Wave", texture_sample(material, "TsunamiRT", black, color, 950, pom), "RGB"),
+        ("Fire", texture_sample(material, "FireMaskRT", black, color, 980, pom), "RGB"),
+        ("CountryId", texture_sample(material, "CountryIDTexture", countries, unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_GRAYSCALE, 1000, pom), "R"),
         ("Inspect", vector_parameter(material, "Inspect", (0.0, 0.0, 0.0, 0.0), 1050), "RGBA"),
+        ("Pom", pom_parameters, "RGBA"),
         ("Sun", vector_parameter(material, "SunDirection", (1.0, 0.0, 0.0, 0.0), 1100), "RGB"),
         ("Time", node(material, unreal.MaterialExpressionTime, -900, 1200), ""),
         ("CloudLayer", vector_parameter(material, "CloudLayer", (0.0, 0.52, 1.25, 0.004), 1300), "RGBA"),
@@ -281,8 +301,9 @@ def build_clouds(black):
     color = unreal.MaterialSamplerType.SAMPLERTYPE_COLOR
     inputs = [
         ("LocalPos", local_position(material, -600), ""),
+        ("UV", node(material, unreal.MaterialExpressionTextureCoordinate, -900, -500), ""),
         ("Mask", texture_sample(material, "ImpactMaskRT", black, color, -400), "RGB"),
-        ("Ash", texture_sample(material, "AshPlumeRT", black, color, -200), "RGB"),
+        ("AshTex", texture_object(material, "AshPlumeRT", black, -200), ""),
         ("Sun", vector_parameter(material, "SunDirection", (1.0, 0.0, 0.0, 0.0), 0), "RGB"),
         ("Time", node(material, unreal.MaterialExpressionTime, -900, 100), ""),
         ("Layer", vector_parameter(material, "Layer", (0.0, 0.52, 1.25, 0.004), 200), "RGBA"),
@@ -359,11 +380,27 @@ def build_ash_advection(black):
     inputs = [
         ("UV", node(material, unreal.MaterialExpressionTextureCoordinate, -900, -100), ""),
         ("AshTex", texture_object(material, "AshSource", black, 0), ""),
+        ("FireTex", texture_object(material, "FireSource", black, 50), ""),
         ("Step", vector_parameter(material, "Step", (0.1, 0.0, 1.0 / 1024.0, 1.0 / 512.0), 100), "RGBA"),
     ]
     shading = custom(material, "ash_advection.hlsl", inputs, unreal.CustomMaterialOutputType.CMOT_FLOAT3)
     output(shading, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
     finish_material(material, MATERIAL_DIR, "M_AshAdvection")
+
+
+def build_step(name, shader_file, inputs):
+    """A simulation step drawn to a render target: UV in, new state out."""
+    material = create_material(MATERIAL_DIR, name)
+    material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
+    graph = [("UV", node(material, unreal.MaterialExpressionTextureCoordinate, -900, -100), "")]
+    y = 0
+    for input_name, parameter_name, texture in inputs:
+        graph.append((input_name, texture_object(material, parameter_name, texture, y), ""))
+        y += 100
+    graph.append(("Step", vector_parameter(material, "Step", (0.016, 0.16, 1.0 / 1024.0, 1.0 / 512.0), y), "RGBA"))
+    shading = custom(material, shader_file, graph, unreal.CustomMaterialOutputType.CMOT_FLOAT3)
+    output(shading, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    finish_material(material, MATERIAL_DIR, name)
 
 
 def build_fx(name, mode, shape, two_sided):
@@ -474,6 +511,8 @@ def main():
     build_sun("M_SunCorona", (1.0, 1.0, 0.0, 0.0), additive=True)
     build_moon()
     build_ash_advection(black)
+    build_step("M_TsunamiStep", "tsunami_step.hlsl", [("WaveTex", "WaveSource", black), ("MasksTex", "MasksTexture", masks)])
+    build_step("M_FireStep", "fire_step.hlsl", [("FireTex", "FireSource", black), ("MasksTex", "MasksTexture", masks), ("DayTex", "DayTexture", day)])
     build_fx("M_FXGlow", 0, (2.2, 0.8, 3.0, 0.0), two_sided=False)
     build_fx("M_FXTrail", 1, (1.6, 1.2, 0.0, 0.0), two_sided=True)
     build_fx("M_FXRing", 2, (3.0, 1.6, 0.0, 0.0), two_sided=True)

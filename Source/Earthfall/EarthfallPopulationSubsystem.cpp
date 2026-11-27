@@ -68,6 +68,7 @@ void UEarthfallPopulationSubsystem::Tick(float DeltaTime)
 	WindTime += DeltaTime;
 	AdvanceDispatches(DeltaTime);
 	AdvancePlumes(DeltaTime);
+	AdvanceTsunamis(DeltaTime);
 	RecoverEnvironment(DeltaTime);
 }
 
@@ -667,6 +668,7 @@ void UEarthfallPopulationSubsystem::ResetSimulation()
 	GridPowerSum = static_cast<float>(Cells.Num());
 	NewsQueue.Reset();
 	Plumes.Reset();
+	Tsunamis.Reset();
 	NewsSequence = 0;
 	DispatchCursor = 0;
 	DispatchRotationTimer = 0.0f;
@@ -706,6 +708,32 @@ void UEarthfallPopulationSubsystem::LoadCountryGrid()
 		{
 			const uint8 Id = CountryGrid[(Y * ScaleY + ScaleY / 2) * CountryGridWidth + X * ScaleX + ScaleX / 2];
 			CellCountry[Y * GridWidth + X] = Id < CountryCount ? Id : 0;
+		}
+	}
+
+	CoastalCells.Reset();
+	for (int32 Y = 2; Y < GridHeight - 2; ++Y)
+	{
+		const double Latitude = PI * (0.5 - (static_cast<double>(Y) + 0.5) / GridHeight);
+		for (int32 X = 0; X < GridWidth; ++X)
+		{
+			if (CellCountry[Y * GridWidth + X] == 0) continue;
+			bool bNearWater = false;
+			for (int32 DY = -2; DY <= 2 && !bNearWater; ++DY)
+			{
+				for (int32 DX = -2; DX <= 2; ++DX)
+				{
+					if (CellCountry[(Y + DY) * GridWidth + (X + DX + GridWidth) % GridWidth] == 0)
+					{
+						bNearWater = true;
+						break;
+					}
+				}
+			}
+			if (!bNearWater) continue;
+			FCoastalCell& Coastal = CoastalCells.AddDefaulted_GetRef();
+			Coastal.Index = Y * GridWidth + X;
+			Coastal.Direction = DirectionFromRadians(Latitude, ((static_cast<double>(X) + 0.5) / GridWidth - 0.5) * 2.0 * PI);
 		}
 	}
 }
@@ -758,4 +786,84 @@ void UEarthfallPopulationSubsystem::AnnounceCountry(int32 CountryId)
 	EnqueueNews(FString::Printf(TEXT("[DOSSIER \u00B7 %s] Population %s  //  %s casualties  //  %s refugees  //  grid %.0f%%  //  government %s"),
 		*Stats.Name.ToUpper(), *FormatPeople(Stats.LivingPopulation), *FormatPeople(Stats.Casualties),
 		*FormatPeople(Stats.Displaced), Stats.GridPercent, StabilityLabel(Stats.Stability)), 6);
+}
+
+// ---------------------------------------------------------------------------
+// Tsunamis. The GPU wave in TsunamiRT is what the player sees; these analytic
+// fronts expand at the same speed and decide when each stretch of coast is hit.
+// A coast only counts as hit if the great-circle path to it is open water, so a
+// continent shields the seas behind it (diffraction around it is not modelled).
+// ---------------------------------------------------------------------------
+void UEarthfallPopulationSubsystem::AddTsunami(const FVector& LocalDirection, float Amplitude)
+{
+	if (Tsunamis.Num() >= 6) Tsunamis.RemoveAt(0);
+	FTsunami& Tsunami = Tsunamis.AddDefaulted_GetRef();
+	Tsunami.Direction = LocalDirection.GetSafeNormal();
+	Tsunami.Amplitude = FMath::Clamp(Amplitude, 0.1f, 4.0f);
+	bool bNearCity = false;
+	EnqueueNews(FString::Printf(TEXT("[TSUNAMI WARNING \u00B7 %s] Ocean impact has displaced the sea surface  //  all coasts on alert"),
+		*DescribeImpactRegion(Tsunami.Direction, bNearCity)), 6);
+}
+
+void UEarthfallPopulationSubsystem::AdvanceTsunamis(float DeltaTime)
+{
+	if (Tsunamis.IsEmpty() || Cells.IsEmpty()) return;
+	double NewCasualties = 0.0;
+	bool bAnyLandfall = false;
+	for (FTsunami& Tsunami : Tsunamis)
+	{
+		const float Previous = Tsunami.Radius;
+		Tsunami.Radius += TsunamiSpeed * DeltaTime;
+		const float CosNear = FMath::Cos(Previous);
+		const float CosFar = FMath::Cos(FMath::Min(Tsunami.Radius, PI));
+		// A ring wave thins as it spreads and loses energy with range.
+		const float Strength = Tsunami.Amplitude / FMath::Sqrt(1.0f + Tsunami.Radius * 10.0f) * FMath::Exp(-Tsunami.Radius / 1.1f);
+		if (Strength < 0.10f) continue;
+		for (const FCoastalCell& Coastal : CoastalCells)
+		{
+			const float Dot = FVector::DotProduct(Coastal.Direction, Tsunami.Direction);
+			if (Dot > CosNear || Dot <= CosFar) continue;
+			// Walk the path from the impact: two land samples before the shore block it.
+			int32 LandSamples = 0;
+			for (int32 Step = 1; Step <= 12 && LandSamples < 2; ++Step)
+			{
+				const FVector Along = FMath::Lerp(Tsunami.Direction, Coastal.Direction, Step / 14.0).GetSafeNormal();
+				if (GetCountryAtDirection(Along) != 0) ++LandSamples;
+			}
+			if (LandSamples >= 2) continue;
+			FEarthfallPopulationCell& Cell = Cells[Coastal.Index];
+			Cell.PowerGridHealth = FMath::Max(0.0f, Cell.PowerGridHealth - Strength * 2.0f);
+			const double Before = Cell.LivingPopulation;
+			if (Before > 0.0)
+			{
+				const double Casualties = Before * FMath::Min(0.30, static_cast<double>(Strength) * 0.22);
+				Cell.DisplacedPopulation = FMath::Max(0.0, Cell.DisplacedPopulation - Casualties * (Cell.DisplacedPopulation / Before));
+				Cell.LivingPopulation = Before - Casualties;
+				const double NotYetDisplaced = FMath::Max(0.0, Cell.LivingPopulation - Cell.DisplacedPopulation);
+				Cell.DisplacedPopulation += NotYetDisplaced * FMath::Min(0.60, static_cast<double>(Strength) * 0.6);
+				NewCasualties += Casualties;
+			}
+			bAnyLandfall = true;
+			const uint8 Country = CellCountry[Coastal.Index];
+			if (Country > 0 && !Tsunami.LandfallCountries.Contains(Country))
+			{
+				Tsunami.LandfallCountries.Add(Country);
+				if (CountryStates.IsValidIndex(Country) && CountryStates[Country].InitialPopulation >= 1.0e6)
+				{
+					EnqueueNews(FString::Printf(TEXT("[MEGA-TSUNAMI LANDFALL \u00B7 %s] Wall of water strikes the coast  //  shoreline power grid failing  //  city lights going dark"),
+						*FString(GCountryTable[Country].Name).ToUpper()), 8);
+				}
+			}
+		}
+	}
+	Tsunamis.RemoveAll([](const FTsunami& Tsunami)
+	{
+		return Tsunami.Radius >= PI || Tsunami.Amplitude / FMath::Sqrt(1.0f + Tsunami.Radius * 10.0f) * FMath::Exp(-Tsunami.Radius / 1.1f) < 0.10f;
+	});
+	if (bAnyLandfall)
+	{
+		Telemetry.TotalCasualties += NewCasualties;
+		Telemetry.TsunamiCasualties += NewCasualties;
+		RefreshPopulationTotals();
+	}
 }

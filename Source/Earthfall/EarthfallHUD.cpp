@@ -329,7 +329,7 @@ void AEarthfallHUD::DrawMultiplierPanel(const AEarthOrbitPawn* Pawn, float Scree
 
 void AEarthfallHUD::DrawReticle(const AEarthOrbitPawn* Pawn, float ScreenWidth, float ScreenHeight)
 {
-	if (!bCursorValid) return;
+	if (!bCursorValid || !Pawn->IsAimEnabled()) return;
 	const FEarthfallWeaponSpec& Spec = EarthfallWeapons::Get(Pawn->GetWeaponIndex());
 	const bool bLocked = Pawn->IsAimOnPlanet();
 	const FLinearColor AimColor = bLocked ? Spec.Color : Dim;

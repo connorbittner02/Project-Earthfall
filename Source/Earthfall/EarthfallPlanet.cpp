@@ -19,10 +19,20 @@ constexpr int32 LatitudeSegments = 160;
 constexpr int32 LongitudeSegments = 320;
 constexpr int32 ImpactMaskWidth = 2048;
 constexpr int32 ImpactMaskHeight = 1024;
-constexpr int32 StampSize = 128;
 constexpr int32 AshWidth = 1024;
 constexpr int32 AshHeight = 512;
 constexpr float AshStepSeconds = 0.1f;
+constexpr int32 SimWidth = 1024;
+constexpr int32 SimHeight = 512;
+/** Fixed wave step: explicit integration is only stable below this at SimWidth. */
+constexpr float TsunamiStepSeconds = 1.0f / 60.0f;
+/** Fire automaton rate, inside the 15-20 Hz budget. */
+constexpr float FireStepSeconds = 1.0f / 16.0f;
+constexpr float TsunamiTailSeconds = 110.0f;
+constexpr float FireTailSeconds = 240.0f;
+/** POM heights in radians: full bowl depth and full rim height. */
+constexpr float CraterBowlDepth = 0.050f;
+constexpr float CraterRimHeight = 0.020f;
 /** The ash field keeps simulating this long after the last strike, then idles. */
 constexpr float AshSimulationTailSeconds = 900.0f;
 /** Crater dents are capped at 3% of the radius, and never deeper than 96% in total. */
@@ -79,6 +89,10 @@ AEarthfallPlanet::AEarthfallPlanet()
 	CloudMaterial = Clouds.Succeeded() ? Clouds.Object : nullptr;
 	AtmosphereMaterial = Atmosphere.Succeeded() ? Atmosphere.Object : nullptr;
 	AshAdvectionMaterial = Advection.Succeeded() ? Advection.Object : nullptr;
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> TsunamiStep(TEXT("/Game/Earth/Materials/M_TsunamiStep.M_TsunamiStep"));
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> FireStep(TEXT("/Game/Earth/Materials/M_FireStep.M_FireStep"));
+	TsunamiStepMaterial = TsunamiStep.Succeeded() ? TsunamiStep.Object : nullptr;
+	FireStepMaterial = FireStep.Succeeded() ? FireStep.Object : nullptr;
 }
 
 void AEarthfallPlanet::BeginPlay()
@@ -88,6 +102,7 @@ void AEarthfallPlanet::BeginPlay()
 	CreateMaterialInstances();
 	BuildImpactMaskResources();
 	BuildAshPlumeResources();
+	BuildWaveFireAndCraterResources();
 	BuildSphereTopology();
 	BuildPlanetMesh();
 	BuildShell(LowCloudLayer, LowCloudScale, LowCloudMID, 10);
@@ -139,6 +154,27 @@ void AEarthfallPlanet::Tick(float DeltaSeconds)
 	{
 		MaskRedrawAccumulator = 0.0f;
 		RedrawImpactMask();
+	}
+
+	if (TsunamiActiveSeconds > 0.0f)
+	{
+		TsunamiActiveSeconds -= DeltaSeconds;
+		TsunamiStepAccumulator = FMath::Min(TsunamiStepAccumulator + DeltaSeconds, TsunamiStepSeconds * 3.0f);
+		while (TsunamiStepAccumulator >= TsunamiStepSeconds)
+		{
+			TsunamiStepAccumulator -= TsunamiStepSeconds;
+			StepTsunami();
+		}
+	}
+	if (FireActiveSeconds > 0.0f)
+	{
+		FireActiveSeconds -= DeltaSeconds;
+		FireStepAccumulator += DeltaSeconds;
+		if (FireStepAccumulator >= FireStepSeconds)
+		{
+			StepFire(FireStepAccumulator);
+			FireStepAccumulator = 0.0f;
+		}
 	}
 
 	if (AshActiveSeconds > 0.0f)
@@ -317,9 +353,9 @@ void AEarthfallPlanet::DeformCrater(const FVector& LocalDirection, const FEarthf
 // ---------------------------------------------------------------------------
 // Impact mask: R = scorch over a 0.25 EMP plateau, G = heat, B = cloud clear.
 // ---------------------------------------------------------------------------
-UTexture2D* AEarthfallPlanet::CreateStampTexture(TFunctionRef<FColor(float)> Evaluate) const
+UTexture2D* AEarthfallPlanet::CreateStampTexture(TFunctionRef<FColor(float, float)> Evaluate, int32 Size) const
 {
-	UTexture2D* Texture = UTexture2D::CreateTransient(StampSize, StampSize, PF_B8G8R8A8);
+	UTexture2D* Texture = UTexture2D::CreateTransient(Size, Size, PF_B8G8R8A8);
 	if (!Texture || !Texture->GetPlatformData() || Texture->GetPlatformData()->Mips.IsEmpty()) return nullptr;
 	// Stamp values are data, not colour: keep them linear so 0.25 lands as 0.25.
 	Texture->SRGB = false;
@@ -328,13 +364,13 @@ UTexture2D* AEarthfallPlanet::CreateStampTexture(TFunctionRef<FColor(float)> Eva
 	Texture->AddressY = TA_Clamp;
 	FTexture2DMipMap& Mip = Texture->GetPlatformData()->Mips[0];
 	FColor* Pixels = static_cast<FColor*>(Mip.BulkData.Lock(LOCK_READ_WRITE));
-	for (int32 Y = 0; Y < StampSize; ++Y)
+	for (int32 Y = 0; Y < Size; ++Y)
 	{
-		for (int32 X = 0; X < StampSize; ++X)
+		for (int32 X = 0; X < Size; ++X)
 		{
-			const float DX = (X + 0.5f - StampSize * 0.5f) / (StampSize * 0.5f);
-			const float DY = (Y + 0.5f - StampSize * 0.5f) / (StampSize * 0.5f);
-			Pixels[Y * StampSize + X] = Evaluate(FMath::Sqrt(DX * DX + DY * DY));
+			const float DX = (X + 0.5f - Size * 0.5f) / (Size * 0.5f);
+			const float DY = (Y + 0.5f - Size * 0.5f) / (Size * 0.5f);
+			Pixels[Y * Size + X] = Evaluate(FMath::Sqrt(DX * DX + DY * DY), FMath::Atan2(DY, DX));
 		}
 	}
 	Mip.BulkData.Unlock();
@@ -350,21 +386,22 @@ void AEarthfallPlanet::BuildImpactMaskResources()
 	ImpactMaskRT->bAutoGenerateMips = false;
 	ImpactMaskRT->AddressX = TA_Wrap;
 	ImpactMaskRT->AddressY = TA_Clamp;
+	ImpactMaskRT->Filter = TF_Bilinear;
 	ImpactMaskRT->InitCustomFormat(ImpactMaskWidth, ImpactMaskHeight, PF_B8G8R8A8, true);
 	ImpactMaskRT->UpdateResourceImmediate(true);
 
 	auto Byte = [](float Value) { return static_cast<uint8>(FMath::RoundToInt(FMath::Clamp(Value, 0.0f, 1.0f) * 255.0f)); };
-	ScorchStampTexture = CreateStampTexture([&Byte](float Distance)
+	ScorchStampTexture = CreateStampTexture([&Byte](float Distance, float)
 	{
 		const float Scorch = 1.0f - FMath::SmoothStep(0.55f, 0.95f, Distance);
 		const float Heat = FMath::Exp(-Distance * Distance * 3.2f) * (1.0f - FMath::SmoothStep(0.85f, 1.0f, Distance));
 		return FColor(Byte(Scorch), Byte(Heat), 0, 255);
 	});
-	EmpStampTexture = CreateStampTexture([&Byte](float Distance)
+	EmpStampTexture = CreateStampTexture([&Byte](float Distance, float)
 	{
 		return FColor(Byte(0.25f * (1.0f - FMath::SmoothStep(0.80f, 1.0f, Distance))), 0, 0, 255);
 	});
-	ClearStampTexture = CreateStampTexture([&Byte](float Distance)
+	ClearStampTexture = CreateStampTexture([&Byte](float Distance, float)
 	{
 		return FColor(0, 0, Byte(1.0f - FMath::SmoothStep(0.72f, 1.0f, Distance)), 255);
 	});
@@ -445,11 +482,12 @@ void AEarthfallPlanet::BuildAshPlumeResources()
 		Target->bAutoGenerateMips = false;
 		Target->AddressX = TA_Wrap;
 		Target->AddressY = TA_Clamp;
+		Target->Filter = TF_Bilinear;
 		Target->InitAutoFormat(AshWidth, AshHeight);
 		Target->UpdateResourceImmediate(true);
 		AshPlumeRTs[Index] = Target;
 	}
-	AshStampTexture = CreateStampTexture([](float Distance)
+	AshStampTexture = CreateStampTexture([](float Distance, float)
 	{
 		const float Density = FMath::Exp(-Distance * Distance * 3.8f) * (1.0f - FMath::SmoothStep(0.82f, 1.0f, Distance));
 		const uint8 Value = static_cast<uint8>(FMath::RoundToInt(Density * 255.0f));
@@ -487,6 +525,7 @@ void AEarthfallPlanet::AdvanceAsh(float StepSeconds)
 	const float WindTime = Population ? static_cast<float>(Population->GetWindTime()) : GetWorld()->GetTimeSeconds();
 	const int32 WriteIndex = 1 - AshReadIndex;
 	AshAdvectionMID->SetTextureParameterValue(TEXT("AshSource"), AshPlumeRTs[AshReadIndex]);
+	if (FireRTs.IsValidIndex(FireReadIndex)) AshAdvectionMID->SetTextureParameterValue(TEXT("FireSource"), FireRTs[FireReadIndex]);
 	AshAdvectionMID->SetVectorParameterValue(TEXT("Step"), FLinearColor(StepSeconds, WindTime, 1.0f / AshWidth, 1.0f / AshHeight));
 	UKismetRenderingLibrary::DrawMaterialToRenderTarget(GetWorld(), AshPlumeRTs[WriteIndex], AshAdvectionMID);
 	AshReadIndex = WriteIndex;
@@ -642,6 +681,14 @@ void AEarthfallPlanet::ResetPlanet()
 	AshActiveSeconds = 0.0f;
 	AshStepAccumulator = 0.0f;
 	BindAshTexture();
+	for (UTextureRenderTarget2D* Target : TsunamiRTs) if (Target) UKismetRenderingLibrary::ClearRenderTarget2D(GetWorld(), Target, FLinearColor(0.5f, 0.5f, 0.0f, 1.0f));
+	for (UTextureRenderTarget2D* Target : FireRTs) if (Target) UKismetRenderingLibrary::ClearRenderTarget2D(GetWorld(), Target, FLinearColor::Black);
+	if (CraterRT) UKismetRenderingLibrary::ClearRenderTarget2D(GetWorld(), CraterRT, FLinearColor::Black);
+	TsunamiReadIndex = 0;
+	FireReadIndex = 0;
+	TsunamiActiveSeconds = 0.0f;
+	FireActiveSeconds = 0.0f;
+	BindSimulationTextures();
 	BuildPlanetMesh();
 	RedrawImpactMask();
 	PushShockParameters();
@@ -690,9 +737,37 @@ void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
 	StampAsh(LocalDirection, BlastAngle * 1.4f + 0.03f,
 		FMath::Min(Spec.Soot * 0.9f * PlumeScale, 3.0f), FMath::Min(Spec.Fallout * 0.9f * PlumeScale, 3.0f));
 
-	if (UEarthfallPopulationSubsystem* Population = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>())
+	// Crater height field for parallax occlusion: depth scales with crater size.
+	const float Relief = FMath::Clamp(BlastAngle * 3.0f, 0.25f, 1.0f);
+	StampInto(CraterRT, CraterStampTexture, LocalDirection, BlastAngle * 1.25f, FLinearColor(Relief, Relief, 0.0f, 1.0f));
+
+	UEarthfallPopulationSubsystem* Population = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>();
+	if (Population)
 	{
 		Population->ApplyStrike(LocalDirection, BlastAngle, Strike.Energy, Strike.WeaponIndex, Strike.YieldMultiplier, Strike.FalloutMultiplier);
+		const bool bOcean = Population->GetCountryAtDirection(LocalDirection) == 0;
+		const int32 Weapon = Strike.WeaponIndex;
+		if (bOcean && (Weapon == 0 || Weapon == 2 || Weapon == 4 || bNuclear))
+		{
+			// An ocean hit lifts the sea surface; the wave equation does the rest.
+			const float Amplitude = FMath::Clamp(Strike.Energy / 160.0f, 0.35f, 1.0f);
+			if (TsunamiRTs.IsValidIndex(TsunamiReadIndex))
+			{
+				StampInto(TsunamiRTs[TsunamiReadIndex], AshStampTexture, LocalDirection, BlastAngle * 0.9f + 0.03f, FLinearColor(Amplitude * 0.5f, 0.0f, 0.0f, 1.0f));
+			}
+			TsunamiActiveSeconds = TsunamiTailSeconds;
+			Population->AddTsunami(LocalDirection, Amplitude * 2.0f);
+		}
+		else if (!bOcean && (Weapon == 0 || Weapon == 1 || Weapon == 2 || bNuclear))
+		{
+			// Thermal weapons light the blast rim; the automaton spreads it downwind.
+			if (FireRTs.IsValidIndex(FireReadIndex))
+			{
+				StampInto(FireRTs[FireReadIndex], FireRingStampTexture, LocalDirection, BlastAngle * 1.12f, FLinearColor(1.0f, 0.0f, 0.0f, 1.0f));
+			}
+			FireActiveSeconds = FireTailSeconds;
+			AshActiveSeconds = FMath::Max(AshActiveSeconds, FireTailSeconds);
+		}
 	}
 	UpdateEnvironment();
 	DeformCrater(LocalDirection, Strike);
@@ -715,4 +790,112 @@ void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
 		FX.YieldMultiplier = Strike.YieldMultiplier;
 		Feedback->InitFeedback(FX);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Tsunami wave field, wildfire automaton and the crater height field
+// ---------------------------------------------------------------------------
+UTextureRenderTarget2D* AEarthfallPlanet::CreateFloatTarget(const TCHAR* Name, int32 Width, int32 Height, bool bFullFloat)
+{
+	UTextureRenderTarget2D* Target = NewObject<UTextureRenderTarget2D>(this, Name);
+	Target->RenderTargetFormat = bFullFloat ? ETextureRenderTargetFormat::RTF_RGBA32f : ETextureRenderTargetFormat::RTF_RGBA16f;
+	Target->ClearColor = FLinearColor::Black;
+	Target->bAutoGenerateMips = false;
+	Target->AddressX = TA_Wrap;
+	Target->AddressY = TA_Clamp;
+	Target->Filter = TF_Bilinear;
+	Target->InitAutoFormat(Width, Height);
+	Target->UpdateResourceImmediate(true);
+	return Target;
+}
+
+void AEarthfallPlanet::BuildWaveFireAndCraterResources()
+{
+	// 32-bit float: the wave equation differences neighbouring heights, and with
+	// the 0.5 storage bias a half-float target turns that into texel-scale noise.
+	TsunamiRTs = {CreateFloatTarget(TEXT("TsunamiRT_0"), SimWidth, SimHeight, true), CreateFloatTarget(TEXT("TsunamiRT_1"), SimWidth, SimHeight, true)};
+	// Calm sea is stored as (0.5, 0.5): see tsunami_step.hlsl.
+	for (UTextureRenderTarget2D* Target : TsunamiRTs) UKismetRenderingLibrary::ClearRenderTarget2D(GetWorld(), Target, FLinearColor(0.5f, 0.5f, 0.0f, 1.0f));
+	FireRTs = {CreateFloatTarget(TEXT("FireMaskRT_0"), SimWidth, SimHeight), CreateFloatTarget(TEXT("FireMaskRT_1"), SimWidth, SimHeight)};
+
+	CraterRT = NewObject<UTextureRenderTarget2D>(this, TEXT("CraterRT"));
+	CraterRT->RenderTargetFormat = ETextureRenderTargetFormat::RTF_RGBA8;
+	CraterRT->ClearColor = FLinearColor::Black;
+	CraterRT->bAutoGenerateMips = false;
+	CraterRT->AddressX = TA_Wrap;
+	CraterRT->AddressY = TA_Clamp;
+	CraterRT->Filter = TF_Bilinear;
+	CraterRT->InitCustomFormat(ImpactMaskWidth, ImpactMaskHeight, PF_B8G8R8A8, true);
+	CraterRT->UpdateResourceImmediate(true);
+
+	auto Byte = [](float Value) { return static_cast<uint8>(FMath::RoundToInt(FMath::Clamp(Value, 0.0f, 1.0f) * 255.0f)); };
+	// Bowl in R; in G a raised rim at 0.8 of the stamp plus fracture rays that
+	// streak outward from it. The stamp is drawn 1.25x the blast radius.
+	CraterStampTexture = CreateStampTexture([&Byte](float Distance, float Angle)
+	{
+		const float Bowl = 1.0f - FMath::SmoothStep(0.0f, 0.74f, Distance);
+		const float Rim = FMath::Exp(-FMath::Square((Distance - 0.80f) / 0.075f));
+		const float Spokes = FMath::Pow(FMath::Abs(FMath::Sin(Angle * 9.0f + FMath::Sin(Angle * 4.0f) * 1.7f)), 10.0f);
+		const float Rays = Spokes * FMath::SmoothStep(0.80f, 0.88f, Distance) * (1.0f - FMath::SmoothStep(0.88f, 1.0f, Distance)) * 0.55f;
+		return FColor(Byte(Bowl), Byte(FMath::Max(Rim, Rays)), 0, 255);
+	}, 512);
+	// Fires start as a ragged ring on the thermal blast rim.
+	FireRingStampTexture = CreateStampTexture([&Byte](float Distance, float Angle)
+	{
+		const float Ring = FMath::Exp(-FMath::Square((Distance - 0.84f) / 0.07f));
+		const float Ragged = 0.55f + 0.45f * FMath::Sin(Angle * 13.0f + FMath::Sin(Angle * 5.0f) * 2.0f);
+		return FColor(Byte(Ring * Ragged), 0, 0, 255);
+	});
+
+	TsunamiStepMID = TsunamiStepMaterial ? UMaterialInstanceDynamic::Create(TsunamiStepMaterial, this) : nullptr;
+	FireStepMID = FireStepMaterial ? UMaterialInstanceDynamic::Create(FireStepMaterial, this) : nullptr;
+	if (SurfaceMID)
+	{
+		SurfaceMID->SetTextureParameterValue(TEXT("CraterRT"), CraterRT);
+		SurfaceMID->SetVectorParameterValue(TEXT("Pom"), FLinearColor(CraterBowlDepth, CraterRimHeight, 0.0f, 0.0f));
+	}
+	BindSimulationTextures();
+}
+
+void AEarthfallPlanet::BindSimulationTextures()
+{
+	if (!SurfaceMID) return;
+	if (TsunamiRTs.IsValidIndex(TsunamiReadIndex)) SurfaceMID->SetTextureParameterValue(TEXT("TsunamiRT"), TsunamiRTs[TsunamiReadIndex]);
+	if (FireRTs.IsValidIndex(FireReadIndex)) SurfaceMID->SetTextureParameterValue(TEXT("FireMaskRT"), FireRTs[FireReadIndex]);
+}
+
+void AEarthfallPlanet::StampInto(UTextureRenderTarget2D* Target, UTexture2D* Texture, const FVector& LocalDirection, float AngularRadius, const FLinearColor& Tint)
+{
+	if (!GetWorld() || !Target || !Texture) return;
+	UCanvas* Canvas = nullptr;
+	FVector2D CanvasSize;
+	FDrawToRenderTargetContext Context;
+	UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(GetWorld(), Target, Canvas, CanvasSize, Context);
+	DrawStamp(Canvas, CanvasSize, Texture, LocalDirection, AngularRadius, Tint);
+	UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(GetWorld(), Context);
+}
+
+void AEarthfallPlanet::StepTsunami()
+{
+	if (!GetWorld() || TsunamiRTs.Num() != 2 || !TsunamiStepMID) return;
+	const int32 WriteIndex = 1 - TsunamiReadIndex;
+	TsunamiStepMID->SetTextureParameterValue(TEXT("WaveSource"), TsunamiRTs[TsunamiReadIndex]);
+	TsunamiStepMID->SetVectorParameterValue(TEXT("Step"),
+		FLinearColor(TsunamiStepSeconds, UEarthfallPopulationSubsystem::TsunamiSpeed, 1.0f / SimWidth, 1.0f / SimHeight));
+	UKismetRenderingLibrary::DrawMaterialToRenderTarget(GetWorld(), TsunamiRTs[WriteIndex], TsunamiStepMID);
+	TsunamiReadIndex = WriteIndex;
+	BindSimulationTextures();
+}
+
+void AEarthfallPlanet::StepFire(float StepSeconds)
+{
+	if (!GetWorld() || FireRTs.Num() != 2 || !FireStepMID) return;
+	const UEarthfallPopulationSubsystem* Population = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>();
+	const float WindTime = Population ? static_cast<float>(Population->GetWindTime()) : GetWorld()->GetTimeSeconds();
+	const int32 WriteIndex = 1 - FireReadIndex;
+	FireStepMID->SetTextureParameterValue(TEXT("FireSource"), FireRTs[FireReadIndex]);
+	FireStepMID->SetVectorParameterValue(TEXT("Step"), FLinearColor(FMath::Min(StepSeconds, 0.2f), WindTime, 1.0f / SimWidth, 1.0f / SimHeight));
+	UKismetRenderingLibrary::DrawMaterialToRenderTarget(GetWorld(), FireRTs[WriteIndex], FireStepMID);
+	FireReadIndex = WriteIndex;
+	BindSimulationTextures();
 }

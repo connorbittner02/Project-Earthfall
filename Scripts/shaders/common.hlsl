@@ -58,6 +58,20 @@ float2 DirToUV(float3 n)
     return float2(atan2(-n.y, n.x) / 6.2831853 + 0.5, acos(clamp(n.z, -1.0, 1.0)) / 3.14159265);
 }
 
+// Wind in radians per second as (eastward, northward). Must stay in sync with
+// EarthfallWind::Velocity in C++, which advects the CPU-side plumes that drive
+// fallout casualties and climate.
+float2 WindVelocity(float lat, float lon, float time)
+{
+    // Easterly trades in the tropics, westerlies in the mid-latitudes.
+    float zonal = -0.016 * cos(3.0 * lat) * (0.7 + 0.3 * cos(lat));
+    zonal += 0.004 * sin(lat * 9.0 + lon * 2.0 + time * 0.021);
+    float meridional = 0.006 * sin(lon * 3.0 + lat * 5.0 + time * 0.03) * cos(lat)
+                     + 0.003 * sin(lon * 7.0 - time * 0.05);
+    return float2(zonal, meridional);
+}
+
+
 // ---------------------------------------------------------------------------
 // Shockwaves. Each slot: A.xyz = centre (unit, planet-local), A.w = front angular
 // radius in radians. B = (push strength, flash intensity, flash radius, ring glow).
