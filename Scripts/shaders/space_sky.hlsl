@@ -1,7 +1,7 @@
 // M_SpaceSky. The sky is addressed by view direction, so it sits at infinity with
-// no parallax. The NASA WISE all-sky mosaic is false-colour infrared (blue
-// starlight band, green dust emission); it is regraded here to a natural
-// Milky Way and overlaid with procedural point stars that stay pin-sharp at 4K.
+// no parallax. The backdrop is ESO's visible-light Milky Way panorama (S. Brunier,
+// CC BY 4.0) in galactic coordinates, with its black floor crushed to true dark
+// space and procedural point stars overlaid so they stay pin-sharp at 4K.
 // Tuning = (panorama gain, star gain, black floor, unused).
 float3 Main(float3 CamVec, Texture2D SkyTex, SamplerState SkyTexSampler, float4 Tuning)
 {
@@ -11,13 +11,9 @@ float3 Main(float3 CamVec, Texture2D SkyTex, SamplerState SkyTexSampler, float4 
     float2 uv = DirToUV(d);
     float3 c = Texture2DSampleLevel(SkyTex, SkyTexSampler, uv, 0).rgb;
 
-    float dust = saturate(c.g - max(c.r, c.b) * 0.85);
-    float starlight = saturate(c.b - dust * 0.5);
-    float3 milkyWay = starlight * float3(1.00, 0.88, 0.72)
-                    + dust * float3(0.55, 0.26, 0.20)
-                    + c.r * float3(0.50, 0.30, 0.20) * 0.3;
-    milkyWay = max(milkyWay - Tuning.z, 0.0);
-    milkyWay = pow(milkyWay, 1.5) * Tuning.x;
+    float3 milkyWay = max(c - Tuning.z, 0.0);
+    milkyWay = pow(milkyWay, 1.2) * Tuning.x;
+    float starlight = dot(c, float3(0.30, 0.45, 0.25));
 
     // Three brightness tiers on a 3D lattice: a few bright stars (2-4), a middle
     // tier (~1) and a dense faint field (0.3-0.6). Low-frequency noise clusters
@@ -28,7 +24,7 @@ float3 Main(float3 CamVec, Texture2D SkyTex, SamplerState SkyTexSampler, float4 
     for (int tier = 0; tier < 3; tier++)
     {
         float scale = tier == 0 ? 95.0 : (tier == 1 ? 260.0 : 620.0);
-        float chance = tier == 0 ? 0.10 : (tier == 1 ? 0.22 : 0.42);
+        float chance = tier == 0 ? 0.06 : (tier == 1 ? 0.13 : 0.24);
         float lowLevel = tier == 0 ? 2.0 : (tier == 1 ? 0.8 : 0.30);
         float highLevel = tier == 0 ? 4.0 : (tier == 1 ? 1.5 : 0.60);
         float3 g = d * scale;
@@ -36,7 +32,7 @@ float3 Main(float3 CamVec, Texture2D SkyTex, SamplerState SkyTexSampler, float4 
         float3 f = g - cell;
         float3 h = Hash33(cell + tier * 19.19);
         float dist = length(f - (0.25 + 0.5 * h));
-        float presence = step(1.0 - chance * (0.35 + cluster + 1.2 * band), Hash13(cell * 1.7 + 5.3 + tier));
+        float presence = step(1.0 - chance * (0.35 + cluster + 0.45 * band), Hash13(cell * 1.7 + 5.3 + tier));
         float level = lerp(lowLevel, highLevel, Hash13(cell + 91.7));
         float radius = tier == 0 ? 0.11 : (tier == 1 ? 0.17 : 0.24);
         float core = saturate(1.0 - dist / radius);

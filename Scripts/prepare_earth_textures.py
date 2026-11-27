@@ -30,7 +30,7 @@ SOURCES = (
     "NASA_BlueMarble_Day.jpg",
     "NASA_BlackMarble_2016_3km.jpg",
     "NASA_BlueMarble_TopoBathy.jpg",
-    "NASA_WISE_AllSky_MilkyWay_4096.jpg",
+    "ESO_MilkyWay_Brunier_eso0932a.jpg",
 )
 
 

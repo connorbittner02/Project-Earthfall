@@ -73,6 +73,10 @@ void AEarthfallCaptureDirector::BuildScript()
 	At(2.7f, [=]() { View(109.0f, -10.0f, 560.0f); });
 	At(5.0f, [this]() { Shot(TEXT("02-sun-limb-stars")); });
 
+	// Pulled back along the galactic plane, so the Milky Way crosses the frame.
+	At(5.02f, [=]() { View(-19.3f, 0.0f, 1100.0f); });
+	At(5.18f, [this]() { Shot(TEXT("02b-milky-way")); });
+
 	At(5.2f, [=]() { View(95.0f, 24.0f, 330.0f); });
 	At(7.5f, [this]() { Shot(TEXT("03-night-city-lights")); });
 

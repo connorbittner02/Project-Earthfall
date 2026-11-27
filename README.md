@@ -9,7 +9,7 @@ An Unreal Engine 5.8 C++ prototype for an Earth-scale destruction sandbox. Self-
 - 160x320 deformable globe with a lightweight sphere proxy for aiming, 8K NASA Blue Marble day map with NASA bathymetry-shaded oceans, isolated Black Marble city lights and a relief normal map.
 - `M_EarthPhotoreal` is **unlit**: sun, soft terminator, GGX ocean sunglint (roughness ~0.30), cloud shadows, city lights, scorch, magma and atmospheric in-scatter are all computed in one shader from a UTC-driven sun vector. The look therefore does not depend on `ASkyAtmosphere`, sky light, exposure metering or shadow cascades. `ASkyAtmosphere` is deliberately not used: at its default 6,360 km scale it buries a 100-unit globe in grey fog.
 - `M_EarthAtmosphere` is an additive shell whose glow is derived analytically from the view ray's closest approach to the planet, giving a crisp blue limb that turns orange through the twilight band and browns as the atmosphere is choked with soot.
-- `M_SpaceSky` regrades the NASA WISE all-sky mosaic (false-colour infrared) to a natural Milky Way and overlays three layers of procedural point stars that stay sharp at 4K. `M_EarthSun` is an HDR disc with limb darkening; `M_SunCorona` adds a halo, diffraction spikes and an anamorphic streak. `M_EarthMoon` is a fully procedural cratered Moon on a slow inclined orbit.
+- `M_SpaceSky` shows ESO's visible-light Milky Way panorama and overlays three brightness tiers of clustered procedural point stars that stay sharp at 4K. `M_EarthSun` is an HDR disc with limb darkening; `M_SunCorona` adds a halo, diffraction spikes and an anamorphic streak. `M_EarthMoon` is a fully procedural cratered Moon on a slow inclined orbit.
 - Fixed exposure with the physical-camera term disabled, TSR anti-aliasing, 45 degree field of view.
 
 **Weather, ash and shockwaves**
@@ -83,24 +83,23 @@ py -3 .\Scripts\validate_shaders.py
 & 'C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe' "$PWD\Earthfall.uproject" -run=pythonscript -script="$PWD\Scripts\build_earth_assets.py" -unattended -nop4 -nosplash
 ```
 
-Set `EARTHFALL_SKIP_TEXTURES=1` to rebuild only the materials. None of this is needed to run the committed assets. The editor-only PythonScriptPlugin ships with UE 5.8; the runtime game is C++. The Niagara systems under `Content/Earthfall/FX/` are copies of built-in UE 5.8 templates.
+Set `EARTHFALL_SKIP_TEXTURES=1` to rebuild only the materials, and `EARTHFALL_REIMPORT=T_Space_Skybox` to force named textures through anyway. None of this is needed to run the committed assets. The editor-only PythonScriptPlugin ships with UE 5.8; the runtime game is C++. The Niagara systems under `Content/Earthfall/FX/` are copies of built-in UE 5.8 templates.
 
-## NASA source imagery
+## Source imagery
 
-NASA imagery is public-domain. Originals are downloaded into `Saved/SourceTextures/`, which Git ignores; only the imported assets under `Content/Earth/` are committed.
+NASA imagery is public-domain; the ESO panorama is licensed CC BY 4.0 and must keep its credit line (ESO/S. Brunier). Originals are downloaded into `Saved/SourceTextures/`, which Git ignores; only the imported assets under `Content/Earth/` are committed.
 
 | Asset | NASA source | Source resolution |
 | --- | --- | --- |
 | `T_Earth_Day` land | [Blue Marble: Next Generation](https://science.nasa.gov/earth/earth-observatory/blue-marble-next-generation/base-map/) | 21600x10800 |
 | `T_Earth_Day` ocean, `T_Earth_Normal`, `T_Earth_Masks` | [Blue Marble with Topography and Bathymetry](https://science.nasa.gov/earth/earth-observatory/blue-marble-next-generation/base-topography-bathymetry/) | 21600x10800 |
 | `T_Earth_Night` | [Earth at Night / Black Marble 2016](https://science.nasa.gov/earth/earth-observatory/earth-at-night/maps/) | 13500x6750 |
-| `T_Space_Skybox` | [NASA WISE All-Sky Mosaic, hosted by NOAA Science On a Sphere](https://sos.noaa.gov/catalog/datasets/all-sky-wide-field-infrared-survey-explorer-mosaic-image/) | 4096x2048 |
+| `T_Space_Skybox` | [ESO, The Milky Way panorama (eso0932a)](https://www.eso.org/public/images/eso0932a/). Credit: ESO/S. Brunier, CC BY 4.0 | 6000x3000 |
 
 `prepare_earth_textures.py` grades the data rather than just resizing it: ocean pixels take NASA's bathymetry shading over a deep-navy floor; highlights are soft-capped at 0.72 linear so sunlit snow never clips; Black Marble's moonlit blue land base is removed so only warm city lights remain; and ocean relief is flattened because waves are procedural.
 
 ## Known limitations
 
-- The Milky Way is a regraded infrared survey, not a visible-light photograph, so dust lanes are approximate. NASA's Deep Star Maps endpoint returned HTTP 403 from the development PC.
 - Cloud, ash and shockwave effects are shader models on thin shells, not volumetric or fluid simulations.
 - Impact-mask and ash stamps are drawn in equirectangular space, so footprints distort near the poles.
 - Plasma trenches, steam, seismic propagation and debris gravity are represented by visual feedback and telemetry rather than coupled physics.

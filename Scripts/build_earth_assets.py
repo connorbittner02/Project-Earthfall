@@ -50,7 +50,9 @@ def ensure_dir(path):
 def import_texture(filename, asset_name, srgb, compression):
     asset_path = TEXTURE_DIR + "/" + asset_name
     source = os.path.join(STAGE, filename)
-    if os.environ.get("EARTHFALL_SKIP_TEXTURES") == "1" and EAL.does_asset_exist(asset_path):
+    # EARTHFALL_REIMPORT=T_Space_Skybox,... forces named textures through even when skipping.
+    forced = asset_name in os.environ.get("EARTHFALL_REIMPORT", "").split(",")
+    if os.environ.get("EARTHFALL_SKIP_TEXTURES") == "1" and not forced and EAL.does_asset_exist(asset_path):
         return unreal.load_asset(asset_path)
     if not os.path.isfile(source):
         raise RuntimeError("Missing staged texture (run prepare_earth_textures.py): " + source)
@@ -312,7 +314,7 @@ def build_space(sky):
     inputs = [
         ("CamVec", node(material, unreal.MaterialExpressionCameraVectorWS, -900, -100), ""),
         ("SkyTex", texture_object(material, "SpaceSkybox", sky, 0), ""),
-        ("Tuning", vector_parameter(material, "Tuning", (1.1, 1.0, 0.03, 0.0), 100), "RGBA"),
+        ("Tuning", vector_parameter(material, "Tuning", (2.0, 1.0, 0.085, 0.0), 100), "RGBA"),
     ]
     shading = custom(material, "space_sky.hlsl", inputs, unreal.CustomMaterialOutputType.CMOT_FLOAT3)
     output(shading, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
@@ -451,7 +453,7 @@ def main():
     night = import_texture("T_Earth_Night.png", "T_Earth_Night", True, default)
     normal = import_texture("T_Earth_Normal.png", "T_Earth_Normal", False, unreal.TextureCompressionSettings.TC_NORMALMAP)
     masks = import_texture("T_Earth_Masks.png", "T_Earth_Masks", False, unreal.TextureCompressionSettings.TC_MASKS)
-    sky = import_texture("NASA_WISE_AllSky_MilkyWay_4096.jpg", "T_Space_Skybox", True, default)
+    sky = import_texture("ESO_MilkyWay_Brunier_eso0932a.jpg", "T_Space_Skybox", True, default)
     black = unreal.load_asset(BLACK)
     if not black:
         raise RuntimeError("Missing engine texture " + BLACK)
