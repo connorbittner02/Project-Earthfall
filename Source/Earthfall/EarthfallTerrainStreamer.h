@@ -7,6 +7,7 @@
 class AEarthfallPlanet;
 class AEarthOrbitPawn;
 class UDecalComponent;
+class USkyLightComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
 
@@ -49,10 +50,16 @@ private:
 	/** One decal the size of the planet: it shades whatever opaque terrain lies inside it. */
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<UDecalComponent> DestructionDecal;
+	/** Sky fill for the lit terrain tiles and their water. Zero in orbit, where everything is unlit. */
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<USkyLightComponent> TerrainSkyLight;
 	UPROPERTY()
 	TObjectPtr<UMaterialInterface> DestructionMaterial;
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> DestructionMID;
+	/** The star backdrop, dimmed when the camera is deep in a daylit sky. */
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> BackdropMID;
 
 	UPROPERTY(Transient)
 	TObjectPtr<AEarthfallPlanet> Planet;
@@ -66,4 +73,5 @@ private:
 	float TerrainReadiness = 0.0f;
 	float CrossFade = 0.0f;
 	bool bStreaming = false;
+	float LogAccumulator = 0.0f;
 };

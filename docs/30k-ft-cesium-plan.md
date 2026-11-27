@@ -95,7 +95,7 @@ not be merged; they should hand over.
 
 ## Status on `feature/cesium-30k-ft`
 
-Built and compiling; **not yet seen with tiles**, because no Cesium ion token is set.
+Built, and verified with a Cesium ion token at 3840x2160 (see the end of this file).
 
 - `Plugins/CesiumForUnreal/` restored and git-ignored; enabled as `"Optional": true`.
   `Earthfall.Build.cs` defines `EARTHFALL_WITH_CESIUM` when the folder exists.
@@ -115,13 +115,41 @@ Built and compiling; **not yet seen with tiles**, because no Cesium ion token is
 - Everything is gated on tiles actually being loaded. Without the plugin or a token the
   capture run is pixel-equivalent to Phase C (verified at 3840x2160, 26 shots).
 
-Unverified until a token is pasted, in the order worth checking:
+## Verified with a token (2026-11-27, 3840x2160, 29 shots, about 76 fps)
 
-1. Tiles appear at all, at the right scale and centred on the planet.
-2. Longitude/latitude alignment against the orbital map (check one coastline during the fade).
-3. Tile brightness under the existing directional light (intensity 4) against the unlit globe.
-4. The decal lands on tiles and lines up with craters and scorch seen from orbit.
-5. Behaviour at the 30,000 ft floor: near-plane clipping, tilt, aiming.
+| Check | Result |
+| --- | --- |
+| Tiles appear, at the right scale, centred on the planet | Yes |
+| Longitude/latitude alignment | The Gulf of California and Baja coast sit where the orbital map puts them; no mirrored or rotated globe. Not measured to the kilometre. |
+| Hand-over 1.10 R to 1.035 R | Dithered dissolve works (`25-mid-descent`) |
+| 30,000 ft floor | Reached (distance 99.993); Grand Canyon relief is real 3D (`27-terrain-30000ft`) |
+| Tile brightness | Close to the unlit globe with the sun at 4.0 and a sky light at 1.0 |
+| Destruction decal | Paints tiles: ejecta, fire and magma glow show at the mantle crater (`28-terrain-crater`) |
+| Night side | City lights restored on tiles through the decal (`24-low-orbit-night-cities`) |
 
-Known gaps: the tiles get no atmospheric haze of their own, crater relief on tiles is
-colour only, and Cesium logs a warning about "Enable World Bounds Checks".
+What it took beyond the first build:
+
+- Readiness is "at least 12 tile components exist", not a load percentage. Streaming never
+  reaches a high percentage while a 4K view is refining.
+- Occlusion culling and fog culling are off on the tileset. The tiles start hidden under
+  the opaque globe, and from low orbit the horizon is thousands of kilometres away.
+- `ForbidHoles` is on, so a coarse parent shows until its children arrive instead of a hole
+  into space. Concurrent loads are raised to 96 tiles and 64 imagery tiles.
+- A sky light (engine daylight cubemap) fades in with the hand-over and with daylight under
+  the camera. Without it the lit tiles had no fill and the sea rendered black.
+- A decal's emissive is scaled by its opacity, so the decal lays a dark base under the
+  night side and under burning ground before adding city lights and fire.
+- Stars and the Milky Way dim when the camera is deep in a daylit sky.
+- Capture holds each low view for 5 to 12 seconds so tiles can refine. A first visit to a
+  place is blurry for a few seconds; `cesium-request-cache.sqlite` makes revisits fast.
+
+Still wrong or unfinished:
+
+- Open ocean on tiles is a flat grey-blue that mirrors the cubemap's clouds
+  (`23-low-orbit-ocean`). It loses the sunglint and bathymetry colour of the orbital ocean.
+- At the mantle crater the decal covers the imagery with one flat ejecta colour. The
+  layers need to tint the terrain, not replace it, and crater relief is still colour only.
+- Tiles get no atmospheric haze of their own, so distant terrain is too crisp.
+- Decal alignment against craters seen from orbit has not been checked side by side.
+- Aiming and firing from below 1.035 R has not been played by hand.
+- Cesium logs a warning about "Enable World Bounds Checks".

@@ -69,16 +69,24 @@ void AEarthfallCaptureDirector::BuildScript()
 	At(0.0f, [this]() { if (AEarthOrbitPawn* P = Pawn()) P->SetAimEnabled(false); });
 	// Lowest orbit first, HUD off, while the planet is still untouched: desert
 	// relief, sunglint on open ocean, city lights at night, and a mid descent.
+	// Each low-orbit view holds for a few seconds first, so streamed terrain
+	// (when Cesium is installed and has a token) has time to load.
 	At(0.0f, [=, this]() { if (AEarthOrbitPawn* P = Pawn()) P->SetHudMode(EEarthfallHudMode::Hidden); View(-112.0f, 27.0f, 103.5f); });
-	At(2.0f, [this]() { Shot(TEXT("22-low-orbit-desert-coast")); });
-	At(2.1f, [=]() { View(-35.0f, -45.0f, 103.5f); });
-	At(3.5f, [this]() { Shot(TEXT("23-low-orbit-ocean")); });
-	At(3.6f, [=]() { View(119.0f, 27.0f, 103.5f); });
-	At(5.0f, [this]() { Shot(TEXT("24-low-orbit-night-cities")); });
-	At(5.1f, [=]() { View(-112.0f, 27.0f, 112.0f); });
-	At(6.5f, [this]() { Shot(TEXT("25-mid-descent")); });
-	At(6.6f, [this]() { if (AEarthOrbitPawn* P = Pawn()) P->SetHudMode(EEarthfallHudMode::Full); });
-	TimeOffset = 6.7f;
+	At(12.0f, [this]() { Shot(TEXT("22-low-orbit-desert-coast")); });
+	At(12.1f, [=]() { View(-35.0f, -45.0f, 103.5f); });
+	At(17.0f, [this]() { Shot(TEXT("23-low-orbit-ocean")); });
+	At(17.1f, [=]() { View(119.0f, 27.0f, 103.5f); });
+	At(23.0f, [this]() { Shot(TEXT("24-low-orbit-night-cities")); });
+	At(23.1f, [=]() { View(-112.0f, 27.0f, 106.0f); });
+	At(28.0f, [this]() { Shot(TEXT("25-mid-descent")); });
+	// The orbit floor only drops below 1.035 R once terrain has loaded; without
+	// it these two views clamp to the procedural floor.
+	At(28.1f, [=]() { View(-112.1f, 35.2f, 100.6f); });
+	At(38.0f, [this]() { Shot(TEXT("26-terrain-40km")); });
+	At(38.1f, [=]() { View(-112.1f, 35.2f, 99.0f); });
+	At(50.0f, [this]() { Shot(TEXT("27-terrain-30000ft")); });
+	At(50.1f, [this]() { if (AEarthOrbitPawn* P = Pawn()) P->SetHudMode(EEarthfallHudMode::Full); });
+	TimeOffset = 50.2f;
 	At(0.0f, [=]() { View(-85.0f, 22.0f, 420.0f); });
 	At(2.5f, [this]() { Shot(TEXT("01-earth-day")); });
 
@@ -140,7 +148,10 @@ void AEarthfallCaptureDirector::BuildScript()
 	// The mantle crater in daylight, off-centre so parallax depth and rim shadow read.
 	At(56.8f, [=]() { View(-36.0f, -12.0f, 215.0f); });
 	At(58.6f, [this]() { Shot(TEXT("21-pom-crater")); });
-	At(59.8f, [this]() { Finish(); });
+	// Down onto the mantle crater, to see the destruction on streamed terrain.
+	At(58.7f, [=, this]() { if (AEarthOrbitPawn* P = Pawn()) P->SetHudMode(EEarthfallHudMode::Hidden); View(-48.0f, -18.0f, 100.6f); });
+	At(66.0f, [this]() { Shot(TEXT("28-terrain-crater")); });
+	At(67.0f, [this]() { Finish(); });
 
 	Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
 }

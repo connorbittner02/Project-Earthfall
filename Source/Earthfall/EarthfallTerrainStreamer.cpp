@@ -4,6 +4,10 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Components/DecalComponent.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/SkyLightComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "UObject/UObjectIterator.h"
+#include "Engine/TextureCube.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
@@ -38,6 +42,8 @@ constexpr float StreamStartScale = 1.30f;
 /** Cesium ion asset IDs: Cesium World Terrain, and Bing Maps Aerial imagery. */
 constexpr int64 WorldTerrainAsset = 1;
 constexpr int64 BingAerialAsset = 2;
+/** Sky fill on streamed terrain at full hand-over in daylight. */
+constexpr float SkyLightIntensity = 1.0f;
 }
 
 AEarthfallTerrainStreamer::AEarthfallTerrainStreamer()
@@ -51,6 +57,16 @@ AEarthfallTerrainStreamer::AEarthfallTerrainStreamer()
 	DestructionDecal->SetupAttachment(Root);
 	DestructionDecal->SetVisibility(false);
 	DestructionDecal->FadeScreenSize = 0.0f;
+
+	TerrainSkyLight = CreateDefaultSubobject<USkyLightComponent>(TEXT("TerrainSkyLight"));
+	TerrainSkyLight->SetupAttachment(Root);
+	TerrainSkyLight->SetMobility(EComponentMobility::Movable);
+	TerrainSkyLight->SourceType = ESkyLightSourceType::SLS_SpecifiedCubemap;
+	TerrainSkyLight->bLowerHemisphereIsBlack = false;
+	TerrainSkyLight->SetCastShadows(false);
+	TerrainSkyLight->Intensity = 0.0f;
+	static ConstructorHelpers::FObjectFinder<UTextureCube> Sky(TEXT("/Engine/MapTemplates/Sky/DaylightAmbientCubemap.DaylightAmbientCubemap"));
+	if (Sky.Succeeded()) TerrainSkyLight->Cubemap = Sky.Object;
 
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Decal(TEXT("/Game/Earth/Materials/M_TerrainDestruction.M_TerrainDestruction"));
 	DestructionMaterial = Decal.Succeeded() ? Decal.Object : nullptr;
@@ -101,11 +117,23 @@ void AEarthfallTerrainStreamer::SpawnTerrain()
 	Tiles->SetIonAssetID(WorldTerrainAsset);
 	// Aiming uses the planet's own collision sphere; tile physics would only cost load time.
 	Tiles->SetCreatePhysicsMeshes(false);
+	// The tiles start out hidden beneath the opaque globe. With occlusion culling
+	// on, Cesium would treat them as unseen and never refine them.
+	Tiles->SetEnableOcclusionCulling(false);
+	Tiles->MaximumSimultaneousTileLoads = 96;
+	// Show a coarser parent until its children arrive, rather than a hole into space.
+	Tiles->ForbidHoles = true;
+	// From low orbit the horizon is thousands of kilometres off; fog culling
+	// would drop those tiles and leave a blank band under the limb.
+	Tiles->EnableFogCulling = false;
+	// Cesium World Terrain carries a water mask, which gives the sea a lit, moving surface.
+	Tiles->SetEnableWaterMask(true);
 	Tiles->FinishSpawning(PlanetTransform);
 
 	UCesiumIonRasterOverlay* Imagery = NewObject<UCesiumIonRasterOverlay>(Tiles, TEXT("BingAerialImagery"));
 	Imagery->IonAssetID = BingAerialAsset;
 	Imagery->MaterialLayerKey = TEXT("Overlay0");
+	Imagery->SetMaximumSimultaneousTileLoads(64);
 	Tiles->AddInstanceComponent(Imagery);
 	Imagery->RegisterComponent();
 
@@ -122,12 +150,12 @@ bool AEarthfallTerrainStreamer::HasLoadedTiles() const
 {
 #if EARTHFALL_WITH_CESIUM
 	const ACesium3DTileset* Tiles = Cast<ACesium3DTileset>(Tileset);
-	if (!Tiles || Tiles->GetLoadProgress() < 75.0f) return false;
-	// Without a valid ion token the tileset never creates a single tile component.
+	if (!Tiles) return false;
+	// Streaming never "finishes" while the camera moves, so readiness is having
+	// enough tiles to cover the view, not a load percentage. Coarse tiles show
+	// first and sharpen in place. Without a valid ion token the count stays zero.
 	TInlineComponentArray<UPrimitiveComponent*> Primitives(Tiles);
-	if (Primitives.Num() > 0) return true;
-	const USceneComponent* TilesRoot = Tiles->GetRootComponent();
-	return TilesRoot && TilesRoot->GetNumChildrenComponents() > 0;
+	return Primitives.Num() >= 12;
 #else
 	return false;
 #endif
@@ -156,6 +184,24 @@ void AEarthfallTerrainStreamer::Tick(float DeltaSeconds)
 	const float ReadyTarget = (bStreaming && HasLoadedTiles()) ? 1.0f : 0.0f;
 	TerrainReadiness = FMath::FInterpConstantTo(TerrainReadiness, ReadyTarget, DeltaSeconds, 1.5f);
 
+	LogAccumulator += DeltaSeconds;
+	if (bStreaming && LogAccumulator >= 1.0f)
+	{
+		LogAccumulator = 0.0f;
+		int32 PrimitiveCount = 0;
+		float Progress = 0.0f;
+#if EARTHFALL_WITH_CESIUM
+		if (const ACesium3DTileset* Tiles = Cast<ACesium3DTileset>(Tileset))
+		{
+			TInlineComponentArray<UPrimitiveComponent*> Primitives(Tiles);
+			PrimitiveCount = Primitives.Num();
+			Progress = Tiles->GetLoadProgress();
+		}
+#endif
+		UE_LOG(LogEarthfallTerrain, Display, TEXT("EARTHFALL_TERRAIN distance=%.3f progress=%.1f primitives=%d readiness=%.2f crossfade=%.2f"),
+			Distance, Progress, PrimitiveCount, TerrainReadiness, CrossFade);
+	}
+
 	CrossFade = TerrainReadiness * (1.0f - FMath::SmoothStep(Radius * FadeEndScale, Radius * FadeStartScale, Distance));
 	Planet->SetSurfaceFade(1.0f - CrossFade);
 	Planet->SetCameraDistance(Distance, CrossFade > 0.5f ? TerrainRadius : Radius);
@@ -166,6 +212,32 @@ void AEarthfallTerrainStreamer::Tick(float DeltaSeconds)
 	Pawn->SetTerrainFloor(TerrainReadiness > 0.99f ? TerrainRadius : 0.0f,
 		FMath::Lerp(Radius * FadeEndScale, TerrainRadius + FloorAltitude, TerrainReadiness));
 
+	// Daylight under the camera decides how much sky there is to reflect.
+	const FVector CameraPosition = PC->PlayerCameraManager ? PC->PlayerCameraManager->GetCameraLocation() : FVector::ZeroVector;
+	const FVector Up = (CameraPosition - Planet->GetActorLocation()).GetSafeNormal();
+	const float Daylight = FMath::SmoothStep(-0.10f, 0.25f, static_cast<float>(FVector::DotProduct(Up, Planet->GetSunDirectionWorld())));
+	TerrainSkyLight->SetIntensity(CrossFade * Daylight * SkyLightIntensity);
+
+	// Deep in a daylit atmosphere the sky outshines the stars.
+	if (!BackdropMID)
+	{
+		for (TObjectIterator<UStaticMeshComponent> It; It; ++It)
+		{
+			if (It->GetWorld() == GetWorld() && It->GetFName() == FName(TEXT("EarthfallSpaceBackdrop")))
+			{
+				BackdropMID = It->CreateDynamicMaterialInstance(0);
+				break;
+			}
+		}
+	}
+	if (BackdropMID)
+	{
+		const float Depth = 1.0f - FMath::SmoothStep(0.3f, 2.0f, Distance - Radius * TerrainRadiusScale);
+		const float Stars = 1.0f - 0.97f * Depth * Daylight;
+		// Tuning = (panorama gain, star gain, black floor, unused), as built in build_earth_assets.py.
+		BackdropMID->SetVectorParameterValue(TEXT("Tuning"), FLinearColor(2.3f * Stars, 0.62f * Stars, 0.075f, 0.0f));
+	}
+
 	const bool bShowDecal = DestructionMID != nullptr && CrossFade > 0.01f;
 	if (DestructionDecal->IsVisible() != bShowDecal) DestructionDecal->SetVisibility(bShowDecal);
 	if (bShowDecal)
@@ -174,6 +246,8 @@ void AEarthfallTerrainStreamer::Tick(float DeltaSeconds)
 		const FVector Camera = PC->PlayerCameraManager ? PC->PlayerCameraManager->GetCameraLocation() : FVector::ZeroVector;
 		const FVector Local = Planet->GetActorTransform().InverseTransformPosition(Camera);
 		DestructionMID->SetVectorParameterValue(TEXT("CameraPos"), FLinearColor(Local.X, Local.Y, Local.Z, 0.0f));
+		const FVector SunLocal = Planet->GetActorTransform().InverseTransformVectorNoScale(Planet->GetSunDirectionWorld());
+		DestructionMID->SetVectorParameterValue(TEXT("SunDirection"), FLinearColor(SunLocal.X, SunLocal.Y, SunLocal.Z, 0.0f));
 		DestructionMID->SetVectorParameterValue(TEXT("Terrain"), FLinearColor(CrossFade, 0.0f, 0.0f, 0.0f));
 	}
 }
