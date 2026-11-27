@@ -81,8 +81,26 @@ done in the decal, not in Cesium's tileset material, which stays stock.
 | `31-ejecta-launch`, `32-ejecta-arc`, `33-reentry-streaks` | Mantle strike near the limb: curtain up, arc, fall |
 | `34-ash-column-terrain` | The same strike's ash column over streamed terrain in red haze |
 
+## Second polish pass
+
+- Ocean strikes dig nothing: no crater stamp, no mesh deformation, no scorch and no melt
+  veins on open water, so no coarse crater polygon sits under a splash.
+- The plume is built from overlapping soft puffs (instanced spheres shaded by
+  `M_FXVolumeInstanced`) instead of a cylinder, a disc and a spray curtain. Land: a stack
+  of ash puffs, a ring at the cloud tops, a lobed cap and a faint ember glow under it.
+  Ocean: a ring of sea-spray puffs, a steam column and a flat churning foam ring.
+- Flooded ground on streamed terrain is darkened wet mud, not pale foam; white foam is
+  kept to the moving wave crest. Run-up is confined to the coast (0.55-0.80 kept per
+  texel, down from 0.84-0.955).
+- Flood roughness is 0.55, not the 0.15 first asked for. At 0.15 and 0.28 the wet ground,
+  seen at a grazing angle, mirrored the warm horizon and read as bright sand dunes.
+
 ## Known limits
 
+- Flooding is now subtle on streamed terrain: in `30-tsunami-terrain-coast` the coast shows
+  a thin foam line at the shore but little visibly inundated ground. The flood mask is
+  about 39 km per texel and does not line up with the streamed coastline.
+- The ember glow under the ash cap is too faint to see in the capture.
 - The plume, crown and column are shaded meshes, not volumetric simulations. Up close the
   crown is a translucent curtain and the column a noise-eroded cylinder and cap.
 - A dark polygonal patch shows under the crown from low orbit: that is the orbital globe's

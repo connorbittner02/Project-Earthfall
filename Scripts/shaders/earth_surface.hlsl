@@ -42,7 +42,8 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
 
     // Impact mask: R carries a 0.25 EMP plateau under a 1.0 scorch core.
     float blackout = saturate(Mask.r * 4.0);
-    float scorch = saturate((Mask.r - 0.25) / 0.60);
+    // Water does not char: the scorch core is a land effect only.
+    float scorch = saturate((Mask.r - 0.25) / 0.60) * (1.0 - water);
     float heat = saturate(Mask.g);
     float cleared = saturate(Mask.b);
     float soot = pow(saturate(Ash.r), 0.7);
@@ -183,7 +184,7 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
     float crest = smoothstep(0.10, 0.60, abs(waveSpeed)) * water;
     float3 foam = float3(0.74, 0.95, 1.00);
     lit += foam * crest * (0.10 + 0.70 * day);
-    lit += foam * flood * (0.05 + 0.40 * day);
+    lit += foam * flood * (0.02 + 0.08 * day);
 
     // --- Explosion flashes.
     float3 flash = ShockFlash(n, A0, B0, C0) + ShockFlash(n, A1, B1, C1)
@@ -217,7 +218,7 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
     float veins = ridgeA * 0.62 + ridgeB * 0.38;
     float veinMask = smoothstep(0.95 - 0.55 * heat, 1.0, veins);
     // Open water quenches most of the melt.
-    float molten = saturate(veinMask * (0.35 + heat) + heat * heat * heat * 0.8) * saturate(Mask.r * 1.6) * (1.0 - 0.8 * water);
+    float molten = saturate(veinMask * (0.35 + heat) + heat * heat * heat * 0.8) * saturate(Mask.r * 1.6) * (1.0 - water);
     float3 magmaCol = lerp(float3(0.90, 0.06, 0.00), float3(1.00, 0.58, 0.14), saturate(molten * heat * 1.6));
     emissive += magmaCol * molten * (1.5 + 11.0 * heat);
     float ember = smoothstep(0.86, 1.0, veins) * scorch * (0.6 + 0.4 * sin(Time * 1.7 + veins * 20.0));

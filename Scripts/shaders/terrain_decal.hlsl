@@ -5,7 +5,8 @@
 // same crater on the ground.
 //   RelPos = pixel position relative to the camera, CamPos = camera position in
 //   planet-local space. Terrain.x = hand-over fade 0..1.
-//   Mode 0 returns (base colour, opacity); Mode 1 returns (emissive, 0).
+//   Mode 0 returns (base colour, opacity); Mode 1 returns (emissive, 0);
+//   Mode 2 returns (roughness, 0, 0, 0).
 float4 Main(float3 RelPos, float3 CamPos,
             Texture2D MaskTex, SamplerState MaskTexSampler,
             Texture2D AshTex, SamplerState AshTexSampler,
@@ -38,7 +39,9 @@ float4 Main(float3 RelPos, float3 CamPos,
     // so only water well clear of the coast is treated; the shallows keep the
     // streamed imagery's own colour.
     float3 masks = Texture2DSampleLevel(MasksTex, MasksTexSampler, uv, 0).rgb;
-    float water = smoothstep(0.80, 0.98, masks.r) * (1.0 - masks.b) * (1.0 - scorch);
+    float water = smoothstep(0.80, 0.98, masks.r) * (1.0 - masks.b);
+    // Water does not char.
+    scorch *= 1.0 - smoothstep(0.35, 0.65, masks.r);
 
     // Crater relief as shading: the slope of the crater height field against the
     // sun, exactly as earth_surface.hlsl bends its normal. Pom = (0.050, 0.020).
@@ -61,7 +64,7 @@ float4 Main(float3 RelPos, float3 CamPos,
     float haze = (1.0 - exp(-length(RelPos) / (4.0 + 9.0 * hazeAltitude))) * 0.75;
     float3 hazeCol = lerp(float3(0.62, 0.24, 0.09), float3(0.40, 0.58, 0.95), smoothstep(0.35, 0.92, Atmos.x)) * 0.55;
 
-    if (Mode < 0.5)
+    if (Mode < 0.5 || Mode > 1.5)
     {
         // Layers composited front to back in the surface shader's order.
         float3 col = float3(0.0, 0.0, 0.0);
@@ -74,7 +77,9 @@ float4 Main(float3 RelPos, float3 CamPos,
         x = saturate(Fire.r * 2.0) * 0.85;       col = lerp(col, float3(0.035, 0.030, 0.028), x); a = a + x - a * x;
         x = pow(deposit, 0.7) * 0.35;            col = lerp(col, float3(0.25, 0.20, 0.16), x); a = a + x - a * x;
         x = saturate(Fire.g * 0.92) * 0.80;      col = lerp(col, float3(0.035, 0.030, 0.028), x); a = a + x - a * x;
-        x = flood * 0.60;                        col = lerp(col, float3(0.10, 0.14, 0.18), x); a = a + x - a * x;
+        // Inundated ground: dark, wet mud and standing water, not foam.
+        float wet = smoothstep(0.12, 0.60, flood) * 0.55;
+        x = wet;                                 col = lerp(col, float3(0.040, 0.036, 0.032), x); a = a + x - a * x;
         x = scorch * 0.94;                       col = lerp(col, float3(0.020, 0.017, 0.015), x); a = a + x - a * x;
         x = saturate(crater.g * 1.3) * 0.40;     col = lerp(col, float3(0.22, 0.19, 0.16), x); a = a + x - a * x;
         x = crater.r * 0.45;                     col = lerp(col, float3(0.015, 0.013, 0.012), x); a = a + x - a * x;
@@ -83,10 +88,15 @@ float4 Main(float3 RelPos, float3 CamPos,
         x = saturate(relief) * 0.35;             col = lerp(col, float3(0.50, 0.45, 0.40), x); a = a + x - a * x;
         // Deep ocean blue under the glint added in the emissive pass.
         x = water * 0.80;                        col = lerp(col, float3(0.010, 0.040, 0.105), x); a = a + x - a * x;
-        x = saturate(crest * 0.6 + flood * 0.18); col = lerp(col, float3(0.74, 0.95, 1.00), x); a = a + x - a * x;
+        x = saturate(crest * 0.7);               col = lerp(col, float3(0.74, 0.95, 1.00), x); a = a + x - a * x;
         x = ColumnShadow(n, Sun, Column, float4(0.0, 0.0, 0.0, Column.w)) * 0.55;
                                                  col = lerp(col, float3(0.0, 0.0, 0.0), x); a = a + x - a * x;
         x = haze;                                col = lerp(col, hazeCol, x); a = a + x - a * x;
+        // Roughness is blended by the same opacity as colour, so it is glossy only
+        // in proportion to how much of that opacity is flood water. 0.15 and 0.28 were
+        // tried: seen at a grazing angle, ground that glossy mirrors the warm horizon
+        // and reads as bright sand dunes. 0.55 is a damp sheen that stays dark.
+        if (Mode > 1.5) return float4(lerp(0.90, 0.55, saturate(wet * (1.0 - haze) / max(a, 1e-3))), 0.0, 0.0, 0.0);
         return float4(col, saturate(a) * Terrain.x);
     }
 
@@ -97,7 +107,7 @@ float4 Main(float3 RelPos, float3 CamPos,
     float veins = ridgeA * 0.62 + ridgeB * 0.38;
     float veinMask = smoothstep(0.95 - 0.55 * heat, 1.0, veins);
     // Open water quenches most of the melt, as on the orbital surface.
-    float molten = saturate(veinMask * (0.35 + heat) + heat * heat * heat * 0.8) * saturate(Mask.r * 1.6) * (1.0 - 0.8 * water);
+    float molten = saturate(veinMask * (0.35 + heat) + heat * heat * heat * 0.8) * saturate(Mask.r * 1.6) * (1.0 - smoothstep(0.35, 0.65, masks.r));
     float3 magmaCol = lerp(float3(0.90, 0.06, 0.00), float3(1.00, 0.58, 0.14), saturate(molten * heat * 1.6));
     float3 emissive = magmaCol * molten * (1.5 + 11.0 * heat);
 

@@ -783,7 +783,9 @@ void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
 	// Strikes built by hand (ApplyImpact) carry no impactor; derive one.
 	const FEarthfallImpactor Impactor = Strike.Impactor.EnergyJoules > 0.0
 		? Strike.Impactor : EarthfallPhysics::MakeImpactor(Strike.WeaponIndex, Strike.YieldMultiplier, 1.0f);
-	bool bOceanStrike = false;
+	UEarthfallPopulationSubsystem* Population = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>();
+	// Open water takes no crater: nothing is dug, deformed or scorched under a splash.
+	const bool bOceanStrike = Population && Population->GetCountryAtDirection(LocalDirection) == 0;
 
 	float ShockMaxRadius = 0.0f;
 	float ShockSpeed = 0.0f;
@@ -809,9 +811,8 @@ void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
 
 	// Crater height field for parallax occlusion: depth scales with crater size.
 	const float Relief = FMath::Clamp(BlastAngle * 3.0f, 0.25f, 1.0f);
-	StampInto(CraterRT, CraterStampTexture, LocalDirection, BlastAngle * 1.25f, FLinearColor(Relief, Relief, 0.0f, 1.0f));
+	if (!bOceanStrike) StampInto(CraterRT, CraterStampTexture, LocalDirection, BlastAngle * 1.25f, FLinearColor(Relief, Relief, 0.0f, 1.0f));
 
-	UEarthfallPopulationSubsystem* Population = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>();
 	if (Population)
 	{
 		Population->ApplyStrike(LocalDirection, BlastAngle, Strike.Energy, Strike.WeaponIndex, Strike.YieldMultiplier, Strike.FalloutMultiplier);
@@ -820,7 +821,6 @@ void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
 		// Wave height, speed and run-up all come from the water the impact
 		// displaces, which comes from its kinetic energy: 1/2 m v^2.
 		const float WaveStrength = (Impactor.bKinetic || bNuclear) ? Impactor.TsunamiStrength() : 0.0f;
-		bOceanStrike = bOcean;
 		if (bOcean && WaveStrength > 0.0f)
 		{
 			// An ocean hit lifts the sea surface; the wave equation does the rest.
@@ -848,7 +848,7 @@ void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
 		}
 	}
 	UpdateEnvironment();
-	DeformCrater(LocalDirection, Strike);
+	if (!bOceanStrike) DeformCrater(LocalDirection, Strike);
 
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -993,7 +993,7 @@ void AEarthfallPlanet::StepTsunami()
 	TsunamiStepMID->SetVectorParameterValue(TEXT("Step"),
 		FLinearColor(TsunamiStepSeconds, UEarthfallPopulationSubsystem::TsunamiSpeed * FMath::Lerp(0.85f, 1.05f, TsunamiDrive), 1.0f / SimWidth, 1.0f / SimHeight));
 	TsunamiStepMID->SetVectorParameterValue(TEXT("Flood"),
-		FLinearColor(FMath::Lerp(0.84f, 0.955f, TsunamiDrive), FMath::Lerp(3.0f, 5.0f, TsunamiDrive), 0.0f, 0.0f));
+		FLinearColor(FMath::Lerp(0.55f, 0.80f, TsunamiDrive), FMath::Lerp(3.0f, 5.0f, TsunamiDrive), 0.0f, 0.0f));
 	UKismetRenderingLibrary::DrawMaterialToRenderTarget(GetWorld(), TsunamiRTs[WriteIndex], TsunamiStepMID);
 	TsunamiReadIndex = WriteIndex;
 	BindSimulationTextures();

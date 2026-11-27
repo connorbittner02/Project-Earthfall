@@ -364,9 +364,11 @@ def build_terrain_decal(black, night, masks):
 
     colour = shade(0, 0)
     glow = shade(1, 1200)
+    gloss = shade(2, 2400)
     output(mask(material, colour, "rgb"), "", unreal.MaterialProperty.MP_BASE_COLOR)
     output(mask(material, colour, "a"), "", unreal.MaterialProperty.MP_OPACITY)
     output(mask(material, glow, "rgb"), "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    output(mask(material, gloss, "r"), "", unreal.MaterialProperty.MP_ROUGHNESS)
     finish_material(material, MATERIAL_DIR, "M_TerrainDestruction")
 
 
@@ -487,9 +489,11 @@ def build_fx(name, mode, shape, two_sided, instanced=False):
     finish_material(material, FX_MATERIAL_DIR, name)
 
 
-def build_fx_volume():
-    """Translucent billowing volume for ash columns, steam and splash crowns."""
-    material = create_material(FX_MATERIAL_DIR, "M_FXVolume")
+def build_fx_volume(name, instanced=False):
+    """Translucent billowing volume for ash columns, steam and sea spray."""
+    material = create_material(FX_MATERIAL_DIR, name)
+    if instanced:
+        material.set_editor_property("used_with_instanced_static_meshes", True)
     material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
     material.set_editor_property("blend_mode", unreal.BlendMode.BLEND_TRANSLUCENT)
     inputs = [
@@ -504,7 +508,7 @@ def build_fx_volume():
     shading = custom(material, "fx_volume.hlsl", inputs, unreal.CustomMaterialOutputType.CMOT_FLOAT4)
     output(mask(material, shading, "rgb"), "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
     output(mask(material, shading, "a"), "", unreal.MaterialProperty.MP_OPACITY)
-    finish_material(material, FX_MATERIAL_DIR, "M_FXVolume")
+    finish_material(material, FX_MATERIAL_DIR, name)
 
 
 def build_projectile_body():
@@ -598,7 +602,8 @@ def main():
     build_step("M_FireStep", "fire_step.hlsl", [("FireTex", "FireSource", black), ("MasksTex", "MasksTexture", masks), ("DayTex", "DayTexture", day)])
     build_fx("M_FXGlow", 0, (2.2, 0.8, 3.0, 0.0), two_sided=False)
     build_fx("M_FXEjecta", 0, (1.6, 1.2, 2.0, 0.0), two_sided=False, instanced=True)
-    build_fx_volume()
+    build_fx_volume("M_FXVolume")
+    build_fx_volume("M_FXVolumeInstanced", instanced=True)
     build_fx("M_FXTrail", 1, (1.6, 1.2, 0.0, 0.0), two_sided=True)
     build_fx("M_FXRing", 2, (3.0, 1.6, 0.0, 0.0), two_sided=True)
     build_fx("M_FXSpray", 3, (1.4, 0.6, 0.0, 0.0), two_sided=True)

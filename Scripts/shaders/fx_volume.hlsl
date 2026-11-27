@@ -23,10 +23,12 @@ float4 Main(float3 NormalWS, float3 CamVec, float3 LocalPos, float3 Sun, float T
     // the outline breaks into billows instead of following the cylinder or sphere.
     float lobes = Fbm(q * 2.3 + float3(11.0, 5.0, 0.0), 3);
     float grazing = 1.0 - mu;
-    float density = core * (0.40 + 0.95 * noise * Shape.y)
-                  - (1.0 - noise) * 0.30 * Shape.y
+    // Contrast (Shape.y) only ever removes density, so a high value opens holes
+    // and wisps instead of filling the mesh in.
+    float density = core * (0.45 + 1.05 * noise)
+                  - (1.0 - noise) * 0.36 * Shape.y
                   - (1.0 - lobes) * grazing * grazing * 0.85 * Shape.y;
-    density = smoothstep(0.04, 0.60, saturate(density));
+    density = smoothstep(0.05, 0.70, saturate(density));
     // A fast-scrolling part is a stem (a cylinder, 100 units tall): fade its two
     // flat ends so they never show through the cap or sit on the ground as a disc.
     density *= lerp(1.0, smoothstep(50.0, 34.0, abs(LocalPos.z)), saturate(Shape.w * 2.0 - 0.6));

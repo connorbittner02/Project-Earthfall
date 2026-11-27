@@ -30,7 +30,10 @@ float3 Main(float3 NormalWS, float3 CamVec, float2 UV, float3 VertexRGB, float V
         // on a circle so the curtain has no seam.
         float v = saturate(UV.y);
         float angle = UV.x * 6.2831853;
-        float3 q = float3(cos(angle) * 7.0, sin(angle) * 7.0, v * 3.2 - Time * 1.1);
+        // Shape.z = frequency along the sheet, Shape.w = frequency round it (0 = defaults).
+        float alongFreq = Shape.z > 0.0 ? Shape.z : 3.2;
+        float roundFreq = Shape.w > 0.0 ? Shape.w : 7.0;
+        float3 q = float3(cos(angle) * roundFreq, sin(angle) * roundFreq, v * alongFreq - Time * 1.1);
         float streaks = Fbm(q, 4);
         float mist = VNoise(q * float3(2.6, 2.6, 0.9) + float3(0.0, 0.0, -Time * 0.7));
         float taper = smoothstep(0.0, 0.22, v) * pow(1.0 - v, Shape.x);
