@@ -867,3 +867,24 @@ void UEarthfallPopulationSubsystem::AdvanceTsunamis(float DeltaTime)
 		RefreshPopulationTotals();
 	}
 }
+
+double UEarthfallPopulationSubsystem::ApplyGlobalAttrition(double Fraction)
+{
+	Fraction = FMath::Clamp(Fraction, 0.0, 1.0);
+	if (Fraction <= 0.0) return 0.0;
+	double Dead = 0.0;
+	for (FEarthfallPopulationCell& Cell : Cells)
+	{
+		if (Cell.LivingPopulation <= 0.0) continue;
+		const double Loss = Cell.LivingPopulation * Fraction;
+		Cell.DisplacedPopulation = FMath::Max(0.0, Cell.DisplacedPopulation * (1.0 - Fraction));
+		Cell.LivingPopulation -= Loss;
+		Dead += Loss;
+	}
+	if (Dead > 0.0)
+	{
+		Telemetry.TotalCasualties += Dead;
+		RefreshPopulationTotals();
+	}
+	return Dead;
+}

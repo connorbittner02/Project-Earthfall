@@ -1,8 +1,12 @@
 #include "EarthOrbitPawn.h"
+#include "EarthfallAudioComponent.h"
 #include "EarthfallHUD.h"
 #include "EarthfallPlanet.h"
 #include "EarthfallPopulationSubsystem.h"
 #include "EarthfallProjectile.h"
+#include "EarthfallSandboxSubsystem.h"
+#include "MetasoundSource.h"
+#include "Misc/App.h"
 #include "Camera/CameraComponent.h"
 #include "Components/InputComponent.h"
 #include "CoreGlobals.h"
@@ -39,6 +43,8 @@ AEarthOrbitPawn::AEarthOrbitPawn()
 	Camera->SetupAttachment(Root);
 	// A long lens keeps the limb a true circle; wider angles egg the planet.
 	Camera->SetFieldOfView(45.0f);
+	Audio = CreateDefaultSubobject<UEarthfallAudioComponent>(TEXT("Audio"));
+	Audio->SetupAttachment(Root);
 
 	TargetPreviewRing = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("TargetPreviewRing"));
 	TargetPreviewRing->SetupAttachment(Root);
@@ -71,6 +77,11 @@ void AEarthOrbitPawn::BeginPlay()
 	GoalPitch = Pitch;
 	GoalDistance = Distance;
 	BuildTargetPreviewRing();
+	// All audio is synthesised; nothing is loaded. The MetaSound module is linked
+	// and its source class resolves, though the synth itself is hand-written.
+	UE_LOG(LogTemp, Display, TEXT("EARTHFALL_AUDIO MetaSound module linked (%s); procedural synth %s"),
+		*UMetaSoundSource::StaticClass()->GetName(), FApp::CanEverRenderAudio() ? TEXT("started") : TEXT("silent: audio disabled"));
+	if (Audio && FApp::CanEverRenderAudio()) Audio->Start();
 
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
 	{
@@ -88,6 +99,22 @@ void AEarthOrbitPawn::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	CooldownRemaining = FMath::Max(0.0f, CooldownRemaining - DeltaSeconds);
 	MessageTimer = FMath::Max(0.0f, MessageTimer - DeltaSeconds);
+	if (Audio)
+	{
+		// Wind takes over from the orbital drone below about a third of a radius up.
+		Audio->SetDescent(1.0f - FMath::SmoothStep(2.0f, 45.0f, Distance - 100.0f));
+		if (const UEarthfallPopulationSubsystem* People = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>())
+		{
+			const FEarthfallTelemetry Telemetry = People->GetTelemetry();
+			Audio->SetFirestorm(Telemetry.SootTeragrams / 30.0f);
+			// Radio static and an emergency tone when war or a nuclear strike makes the news.
+			if (Telemetry.LatestDispatch != LastDispatchHeard)
+			{
+				LastDispatchHeard = Telemetry.LatestDispatch;
+				if (LastDispatchHeard.Contains(TEXT("WAR")) || LastDispatchHeard.Contains(TEXT("NUCLEAR"))) Audio->TriggerAlert();
+			}
+		}
+	}
 	if (bIsOrbiting)
 	{
 		const APlayerController* PC = Cast<APlayerController>(GetController());
@@ -178,9 +205,10 @@ void AEarthOrbitPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 	PlayerInputComponent->BindKey(EKeys::D, IE_Pressed, this, &AEarthOrbitPawn::RadiusUp);
 	PlayerInputComponent->BindKey(EKeys::Z, IE_Pressed, this, &AEarthOrbitPawn::FalloutDown);
 	PlayerInputComponent->BindKey(EKeys::C, IE_Pressed, this, &AEarthOrbitPawn::FalloutUp);
-	// H cycles Full HUD -> ticker-only cinema mode -> hidden. Tab or MMB toggles inspect mode.
+	// H cycles Full HUD -> ticker-only cinema mode -> hidden. Tab cycles the dock's tabs; M or MMB toggles inspect mode.
 	PlayerInputComponent->BindKey(EKeys::H, IE_Pressed, this, &AEarthOrbitPawn::CycleHudMode);
-	PlayerInputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &AEarthOrbitPawn::ToggleInspectMode);
+	PlayerInputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &AEarthOrbitPawn::CycleTab);
+	PlayerInputComponent->BindKey(EKeys::M, IE_Pressed, this, &AEarthOrbitPawn::ToggleInspectMode);
 	PlayerInputComponent->BindKey(EKeys::MiddleMouseButton, IE_Pressed, this, &AEarthOrbitPawn::ToggleInspectMode);
 }
 
@@ -253,6 +281,8 @@ void AEarthOrbitPawn::SetStatus(const FString& Message, float Seconds)
 void AEarthOrbitPawn::SelectWeapon(int32 Index)
 {
 	WeaponIndex = FMath::Clamp(Index, 0, EarthfallWeapons::Count - 1);
+	ToolTab = EarthfallTools::TabOrbital;
+	ToolSlot[0] = WeaponIndex;
 	SetStatus(FString::Printf(TEXT("WEAPON SELECTED  //  %s"), EarthfallWeapons::Get(WeaponIndex).Name), 1.0f);
 }
 
@@ -319,6 +349,23 @@ void AEarthOrbitPawn::FireImpact()
 		SetStatus(TEXT("WEAPON RECHARGING"), 0.7f);
 		return;
 	}
+	if (ToolTab != EarthfallTools::TabOrbital)
+	{
+		// Nature and diplomacy tools act where the cursor points; nothing is launched.
+		UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>();
+		if (Sandbox && Planet && GetWorld()->LineTraceSingleByChannel(Hit, Start, Start + Direction * 5000.0f, ECC_Visibility))
+		{
+			const FVector Local = Planet->GetActorTransform().InverseTransformVectorNoScale(Hit.ImpactPoint - Planet->GetActorLocation()).GetSafeNormal();
+			SetStatus(Sandbox->UseTool(ToolTab, ToolSlot[ToolTab], Local, this), 2.0f);
+			CooldownDuration = EarthfallTools::Get(ToolTab, ToolSlot[ToolTab]).Cooldown;
+			CooldownRemaining = CooldownDuration;
+		}
+		else
+		{
+			SetStatus(TEXT("NO PLANETARY CONTACT"), 0.8f);
+		}
+		return;
+	}
 	if (Planet && GetWorld()->LineTraceSingleByChannel(Hit, Start, Start + Direction * 5000.0f, ECC_Visibility))
 	{
 		LaunchStrike(Planet, Hit.ImpactPoint);
@@ -347,6 +394,11 @@ void AEarthOrbitPawn::LaunchStrike(AEarthfallPlanet* Planet, const FVector& Impa
 		GetMultiplier(EEarthfallMultiplier::Yield), GetMultiplier(EEarthfallMultiplier::BlastRadius),
 		GetMultiplier(EEarthfallMultiplier::Fallout));
 
+	SpawnProjectile(Planet, Strike);
+}
+
+void AEarthOrbitPawn::SpawnProjectile(AEarthfallPlanet* Planet, const FEarthfallStrike& Strike)
+{
 	// Munitions leave from just off-axis of the player's view, alternating sides,
 	// so each launch is seen streaking away toward the target.
 	const FVector Muzzle = Camera->GetComponentLocation() + Camera->GetForwardVector() * 16.0f
@@ -360,14 +412,40 @@ void AEarthOrbitPawn::LaunchStrike(AEarthfallPlanet* Planet, const FVector& Impa
 	{
 		Projectile->Launch(Planet, this, Muzzle, Strike);
 		++LaunchCount;
-		SetStatus(FString::Printf(TEXT("LAUNCH  //  %s"), EarthfallWeapons::Get(WeaponIndex).Name), 1.2f);
+		if (Audio) Audio->TriggerLaunch();
+		SetStatus(FString::Printf(TEXT("LAUNCH  //  %s"), EarthfallWeapons::Get(Strike.WeaponIndex).Name), 1.2f);
 	}
+}
+
+void AEarthOrbitPawn::LaunchWeaponAt(const FVector& PlanetLocalDirection, int32 Weapon, float Yield, float RadiusMultiplier, float Fallout)
+{
+	AEarthfallPlanet* Planet = FindPlanet();
+	if (!Planet || !GetWorld() || !Camera) return;
+	const FVector World = Planet->GetActorTransform().TransformVectorNoScale(PlanetLocalDirection.GetSafeNormal());
+	SpawnProjectile(Planet, FEarthfallStrike::Make(Planet->GetActorLocation() + World * Planet->PlanetRadius, Weapon, Yield, RadiusMultiplier, Fallout));
+}
+
+void AEarthOrbitPawn::SelectTab(int32 Tab)
+{
+	ToolTab = FMath::Clamp(Tab, 0, EarthfallTools::TabCount - 1);
+	SetStatus(FString::Printf(TEXT("%s  //  %s"), EarthfallTools::TabName(ToolTab), EarthfallTools::Get(ToolTab, ToolSlot[ToolTab]).Name), 1.2f);
+}
+
+void AEarthOrbitPawn::SelectTool(int32 Tab, int32 Slot)
+{
+	ToolTab = FMath::Clamp(Tab, 0, EarthfallTools::TabCount - 1);
+	if (Slot < 0 || Slot >= EarthfallTools::Count(ToolTab)) return;
+	ToolSlot[ToolTab] = Slot;
+	if (ToolTab == EarthfallTools::TabOrbital) SelectWeapon(Slot);
+	else SetStatus(FString::Printf(TEXT("TOOL ARMED  //  %s"), EarthfallTools::Get(ToolTab, Slot).Name), 1.0f);
 }
 
 void AEarthOrbitPawn::NotifyStrikeLanded(const FEarthfallStrike& Strike)
 {
 	++ImpactCount;
 	TriggerImpactShake(Strike);
+	// Sound arrives after the flash: about a second in orbit, sooner close in.
+	if (Audio) Audio->TriggerBoom(FMath::Clamp(Strike.Radius / 30.0f, 0.25f, 1.0f), FMath::Clamp((Distance - 100.0f) / 260.0f, 0.15f, 2.0f));
 	SetStatus(FString::Printf(TEXT("IMPACT CONFIRMED  //  #%04d"), ImpactCount), 1.4f);
 }
 
@@ -420,6 +498,7 @@ void AEarthOrbitPawn::ResetSimulation()
 	if (!GetWorld()) return;
 	for (TActorIterator<AEarthfallProjectile> It(GetWorld()); It; ++It) It->Destroy();
 	if (AEarthfallPlanet* Planet = FindPlanet()) Planet->ResetPlanet();
+	if (UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>()) Sandbox->ResetSandbox();
 	ImpactCount = 0;
 	LaunchCount = 0;
 	CooldownRemaining = 0.0f;

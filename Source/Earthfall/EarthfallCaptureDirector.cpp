@@ -1,4 +1,6 @@
 #include "EarthfallCaptureDirector.h"
+#include "EngineUtils.h"
+#include "EarthfallPlanet.h"
 #include "EarthOrbitPawn.h"
 #include "EarthfallPopulationSubsystem.h"
 #include "EarthfallTypes.h"
@@ -175,7 +177,22 @@ void AEarthfallCaptureDirector::BuildScript()
 	At(97.2f, [=]() { View(-100.0f, 20.0f, 103.5f); });
 	At(100.0f, [=]() { View(-100.0f, 20.0f, 101.2f); });
 	At(110.0f, [this]() { Shot(TEXT("34-ash-column-terrain")); });
-	At(111.0f, [this]() { Finish(); });
+	// The command dock's second and third tabs (the first is in every HUD shot).
+	At(110.2f, [=, this]() { View(-80.0f, 30.0f, 430.0f); if (AEarthOrbitPawn* P = Pawn()) { P->SetHudMode(EEarthfallHudMode::Full); P->SelectTool(EarthfallTools::TabNature, EarthfallTools::PlagueRain); } });
+	At(111.4f, [this]() { Shot(TEXT("35-dock-bio-nature")); });
+	At(111.5f, [this]() { if (AEarthOrbitPawn* P = Pawn()) P->SelectTool(EarthfallTools::TabDiplomacy, EarthfallTools::WhisperOfWar); });
+	At(112.2f, [this]() { Shot(TEXT("36-dock-diplomacy")); });
+	// Nuclear winter, pinned for the shot: the sea-ice and frost front the climate
+	// model would reach below 6 C or 40% sunlight.
+	At(112.3f, [=, this]()
+	{
+		View(-40.0f, 48.0f, 440.0f);
+		if (AEarthOrbitPawn* P = Pawn()) { P->SetHudMode(EEarthfallHudMode::Hidden); P->SelectTool(EarthfallTools::TabOrbital, 0); }
+		for (TActorIterator<AEarthfallPlanet> It(GetWorld()); It; ++It) It->SetWinterOverride(0.75f);
+	});
+	At(114.5f, [this]() { Shot(TEXT("37-nuclear-winter-ice")); });
+	At(114.6f, [this]() { for (TActorIterator<AEarthfallPlanet> It(GetWorld()); It; ++It) It->SetWinterOverride(-1.0f); });
+	At(115.2f, [this]() { Finish(); });
 
 	Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
 }

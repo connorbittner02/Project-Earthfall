@@ -288,6 +288,7 @@ def build_surface(day, night, normal, masks, countries, black):
         ("Time", node(material, unreal.MaterialExpressionTime, -900, 1200), ""),
         ("CloudLayer", vector_parameter(material, "CloudLayer", (0.0, 0.52, 1.25, 0.004), 1300), "RGBA"),
         ("Tuning", vector_parameter(material, "Tuning", (1.75, 3.2, 1.0, 2.6), 1400), "RGBA"),
+        ("Climate", vector_parameter(material, "Climate", (0.0, 0.0, 0.0, 0.0), 1450), "RGBA"),
     ] + shock_inputs(material, 1500)
     shading = custom(material, "earth_surface.hlsl", inputs, unreal.CustomMaterialOutputType.CMOT_FLOAT3)
     output(shading, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)

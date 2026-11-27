@@ -6,6 +6,7 @@
 #include "EarthOrbitPawn.generated.h"
 
 class AEarthfallPlanet;
+class UEarthfallAudioComponent;
 
 /** How much of the HUD is drawn. H cycles through these. */
 enum class EEarthfallHudMode : uint8
@@ -54,6 +55,15 @@ public:
 
 	// --- Driven by input, HUD buttons and the capture director.
 	void SelectWeapon(int32 Index);
+	/** The command dock: which tab is open and which tool is armed on each. */
+	int32 GetToolTab() const { return ToolTab; }
+	int32 GetToolSlot(int32 Tab) const { return ToolSlot[FMath::Clamp(Tab, 0, 2)]; }
+	void SelectTab(int32 Tab);
+	void CycleTab() { SelectTab((ToolTab + 1) % 3); }
+	void SelectTool(int32 Tab, int32 Slot);
+	/** Launch a specific weapon at a planet-local direction, whatever is selected, ignoring cooldown. */
+	void LaunchWeaponAt(const FVector& PlanetLocalDirection, int32 Weapon, float Yield, float RadiusMultiplier, float Fallout);
+	UEarthfallAudioComponent* GetAudio() const { return Audio; }
 	void AdjustMultiplier(EEarthfallMultiplier Kind, int32 Delta);
 	void SetMultiplierIndex(EEarthfallMultiplier Kind, int32 Index);
 	void ResetSimulation();
@@ -83,12 +93,12 @@ protected:
 	void EndOrbit();
 	void ZoomInput(float Value);
 	void FireImpact();
-	void SelectWeapon1() { SelectWeapon(0); }
-	void SelectWeapon2() { SelectWeapon(1); }
-	void SelectWeapon3() { SelectWeapon(2); }
-	void SelectWeapon4() { SelectWeapon(3); }
-	void SelectWeapon5() { SelectWeapon(4); }
-	void SelectWeapon6() { SelectWeapon(5); }
+	void SelectWeapon1() { SelectTool(ToolTab, 0); }
+	void SelectWeapon2() { SelectTool(ToolTab, 1); }
+	void SelectWeapon3() { SelectTool(ToolTab, 2); }
+	void SelectWeapon4() { SelectTool(ToolTab, 3); }
+	void SelectWeapon5() { SelectTool(ToolTab, 4); }
+	void SelectWeapon6() { SelectTool(ToolTab, 5); }
 	void YieldDown() { AdjustMultiplier(EEarthfallMultiplier::Yield, -1); }
 	void YieldUp() { AdjustMultiplier(EEarthfallMultiplier::Yield, 1); }
 	void RadiusDown() { AdjustMultiplier(EEarthfallMultiplier::BlastRadius, -1); }
@@ -132,6 +142,12 @@ private:
 	EEarthfallHudMode HudMode = EEarthfallHudMode::Full;
 
 	int32 WeaponIndex = 0;
+	int32 ToolTab = 0;
+	int32 ToolSlot[3] = {0, 0, 0};
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<UEarthfallAudioComponent> Audio;
+	/** The last headline heard, so each war or nuclear dispatch sounds its alert once. */
+	FString LastDispatchHeard;
 	int32 MultiplierIndices[static_cast<int32>(EEarthfallMultiplier::Count)];
 	int32 ImpactCount = 0;
 	int32 LaunchCount = 0;
@@ -150,6 +166,7 @@ private:
 	void BuildTargetPreviewRing();
 	void UpdateTargetPreviewRing();
 	void LaunchStrike(AEarthfallPlanet* Planet, const FVector& ImpactPoint);
+	void SpawnProjectile(AEarthfallPlanet* Planet, const FEarthfallStrike& Strike);
 	void TriggerImpactShake(const FEarthfallStrike& Strike);
 	void SetStatus(const FString& Message, float Seconds);
 };

@@ -248,8 +248,8 @@ void AEarthfallTerrainStreamer::Tick(float DeltaSeconds)
 		DestructionMID->SetVectorParameterValue(TEXT("CameraPos"), FLinearColor(Local.X, Local.Y, Local.Z, 0.0f));
 		const FVector SunLocal = Planet->GetActorTransform().InverseTransformVectorNoScale(Planet->GetSunDirectionWorld());
 		DestructionMID->SetVectorParameterValue(TEXT("SunDirection"), FLinearColor(SunLocal.X, SunLocal.Y, SunLocal.Z, 0.0f));
-		const FVector2D Atmosphere = Planet->GetAtmosphereState();
-		DestructionMID->SetVectorParameterValue(TEXT("Atmosphere"), FLinearColor(Atmosphere.X, Atmosphere.Y, 0.0f, 0.0f));
+		const FVector Atmosphere = Planet->GetAtmosphereState();
+		DestructionMID->SetVectorParameterValue(TEXT("Atmosphere"), FLinearColor(Atmosphere.X, Atmosphere.Y, Atmosphere.Z, 0.0f));
 		DestructionMID->SetVectorParameterValue(TEXT("Column"), Planet->GetColumnShadowParams());
 		DestructionMID->SetVectorParameterValue(TEXT("Terrain"), FLinearColor(CrossFade, 0.0f, 0.0f, 0.0f));
 	}

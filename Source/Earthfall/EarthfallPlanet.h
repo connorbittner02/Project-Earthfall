@@ -50,7 +50,13 @@ public:
 	/** A large ejecta fragment has landed: raise dust and, on land, light a fire. */
 	void SeedSecondaryImpact(const FVector& LocalDirection);
 	/** (atmosphere health 0..1 after soot, sunlight 0..1): drives haze colour on streamed terrain. */
-	FVector2D GetAtmosphereState() const { return FVector2D(AtmosphereHealthNow, SunlightNow); }
+	FVector GetAtmosphereState() const { return FVector(AtmosphereHealthNow, SunlightNow, WinterLevel); }
+	/** 0 = today's ice, 1 = frost to the tropics. Advances while the climate is broken and retreats slowly. */
+	float GetWinterLevel() const { return WinterLevel; }
+	/** Pin the winter level for a capture or a test; negative releases it back to the climate. */
+	void SetWinterOverride(float Level) { WinterOverride = Level; }
+	/** Lift the sea surface at an open-water point, as an impact or sea-floor rupture does. Strength 0..1. */
+	void TriggerTsunami(const FVector& LocalDirection, float Strength);
 	/** (planet-local direction, height in radii) of the tallest standing ash or steam column; height 0 if none. */
 	FLinearColor GetColumnShadowParams() const;
 
@@ -194,6 +200,12 @@ private:
 	float EnvironmentAccumulator = 0.0f;
 	int32 AshReadIndex = 0;
 	float SurfaceFade = 1.0f;
+	float WinterLevel = 0.0f;
+	float WinterOverride = -1.0f;
+	float FamineTimer = 0.0f;
+	float FamineNewsTimer = 0.0f;
+	double FamineDeadSinceNews = 0.0;
+	void UpdateWinter(float DeltaSeconds);
 	float AtmosphereHealthNow = 1.0f;
 	float SunlightNow = 1.0f;
 	/** Strength 0..1 of the strongest tsunami still running; sets wave speed and run-up. */

@@ -131,6 +131,7 @@ void AEarthfallPlanet::Tick(float DeltaSeconds)
 		UpdateSunDirection();
 	}
 
+	UpdateWinter(DeltaSeconds);
 	EnvironmentAccumulator += DeltaSeconds;
 	if (EnvironmentAccumulator >= 0.5f)
 	{
@@ -719,6 +720,7 @@ void AEarthfallPlanet::UpdateEnvironment()
 	if (SurfaceMID)
 	{
 		SurfaceMID->SetVectorParameterValue(TEXT("Tuning"), FLinearColor(SunIntensity * Sunlight, CityLightGain, Health, SunglintGain));
+		SurfaceMID->SetVectorParameterValue(TEXT("Climate"), FLinearColor(WinterLevel, 0.0f, 0.0f, 0.0f));
 	}
 	if (AtmosphereMID)
 	{
@@ -752,6 +754,9 @@ void AEarthfallPlanet::ResetPlanet()
 	TsunamiActiveSeconds = 0.0f;
 	FireActiveSeconds = 0.0f;
 	TsunamiDrive = 0.0f;
+	WinterLevel = 0.0f;
+	WinterOverride = -1.0f;
+	FamineDeadSinceNews = 0.0;
 	for (TActorIterator<AEarthfallPlume> It(GetWorld()); It; ++It) It->Destroy();
 	for (TActorIterator<AEarthfallEjecta> It(GetWorld()); It; ++It) It->Reset();
 	BindSimulationTextures();
@@ -1039,4 +1044,56 @@ FLinearColor AEarthfallPlanet::GetColumnShadowParams() const
 		if (Height > Best.A) Best = FLinearColor(Shock.Direction.X, Shock.Direction.Y, Shock.Direction.Z, Height);
 	}
 	return Best;
+}
+
+void AEarthfallPlanet::TriggerTsunami(const FVector& LocalDirection, float Strength)
+{
+	if (!GetWorld() || !TsunamiRTs.IsValidIndex(TsunamiReadIndex)) return;
+	Strength = FMath::Clamp(Strength, 0.25f, 1.0f);
+	StampInto(TsunamiRTs[TsunamiReadIndex], AshStampTexture, LocalDirection, 0.07f, FLinearColor(Strength * 0.5f, 0.0f, 0.0f, 1.0f));
+	TsunamiActiveSeconds = TsunamiTailSeconds;
+	TsunamiDrive = FMath::Max(TsunamiDrive, Strength);
+	if (UEarthfallPopulationSubsystem* Population = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>())
+	{
+		Population->AddTsunami(LocalDirection, Strength * 2.0f);
+	}
+}
+
+void AEarthfallPlanet::UpdateWinter(float DeltaSeconds)
+{
+	UEarthfallPopulationSubsystem* Population = GetWorld() ? GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>() : nullptr;
+	if (!Population) return;
+	const FEarthfallTelemetry Telemetry = Population->GetTelemetry();
+
+	// Nuclear winter sets in below 6 C or 40% sunlight and deepens the further
+	// past them the climate goes. Ice advances five times faster than it retreats,
+	// so a brief recovery does not undo it.
+	const float Cold = FMath::Clamp((6.0f - Telemetry.MeanTemperatureC) / 10.0f, 0.0f, 1.0f);
+	const float Dark = FMath::Clamp((40.0f - Telemetry.SunlightPercent) / 30.0f, 0.0f, 1.0f);
+	const float Target = FMath::Max(Cold, Dark);
+	if (WinterOverride >= 0.0f)
+	{
+		WinterLevel = FMath::Clamp(WinterOverride, 0.0f, 1.0f);
+	}
+	else
+	{
+		WinterLevel += FMath::Clamp(Target - WinterLevel, -0.004f * DeltaSeconds, 0.020f * DeltaSeconds);
+	}
+
+	if (WinterLevel < 0.05f) return;
+	// Famine and exposure: a steady toll everywhere for as long as the ice holds.
+	FamineTimer += DeltaSeconds;
+	FamineNewsTimer += DeltaSeconds;
+	if (FamineTimer >= 1.0f)
+	{
+		FamineDeadSinceNews += Population->ApplyGlobalAttrition(0.0006 * WinterLevel * FamineTimer);
+		FamineTimer = 0.0f;
+	}
+	if (FamineNewsTimer >= 15.0f && FamineDeadSinceNews >= 1.0e5)
+	{
+		Population->PostDispatch(FString::Printf(TEXT("[NUCLEAR WINTER] HARVESTS FAIL  //  %.1f MILLION DEAD OF FAMINE AND EXPOSURE  //  SEA ICE ADVANCING"),
+			FamineDeadSinceNews / 1.0e6), 7);
+		FamineNewsTimer = 0.0f;
+		FamineDeadSinceNews = 0.0;
+	}
 }

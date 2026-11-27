@@ -262,3 +262,81 @@ struct FEarthfallStrike
 			* FMath::Pow(FMath::Max(YieldMultiplier, 0.01f), 0.25f);
 	}
 };
+
+/** One entry on the command dock. */
+struct FEarthfallToolSpec
+{
+	const TCHAR* Name;
+	const TCHAR* Descriptor;
+	/** One line shown under the dock for the selected or hovered tool. */
+	const TCHAR* Hint;
+	FLinearColor Color;
+	float Cooldown;
+};
+
+/** The three tabs of the command dock. Tab 0 is the orbital arsenal above. */
+namespace EarthfallTools
+{
+	constexpr int32 TabCount = 3;
+	constexpr int32 TabOrbital = 0;
+	constexpr int32 TabNature = 1;
+	constexpr int32 TabDiplomacy = 2;
+
+	/** Slots on the BIO & NATURE tab. */
+	constexpr int32 PlagueRain = 0;
+	constexpr int32 RageOutbreak = 1;
+	constexpr int32 CureRain = 2;
+	constexpr int32 Volcano = 3;
+	constexpr int32 Tsunami = 4;
+	constexpr int32 MeteorShower = 5;
+
+	/** Slots on the DIPLOMACY & SPAWNERS tab. */
+	constexpr int32 WhisperOfWar = 0;
+	constexpr int32 ForcePeace = 1;
+	constexpr int32 DefenseSatellite = 2;
+	constexpr int32 StrikeGroup = 3;
+	constexpr int32 RebelInsurgency = 4;
+
+	inline const TCHAR* TabName(int32 Tab)
+	{
+		static const TCHAR* Names[TabCount] = {TEXT("ORBITAL & NUCLEAR"), TEXT("BIO & NATURE"), TEXT("DIPLOMACY & SPAWNERS")};
+		return Names[FMath::Clamp(Tab, 0, TabCount - 1)];
+	}
+
+	inline const TCHAR* TabShortName(int32 Tab)
+	{
+		static const TCHAR* Names[TabCount] = {TEXT("ORBITAL"), TEXT("NATURE"), TEXT("DIPLOMACY")};
+		return Names[FMath::Clamp(Tab, 0, TabCount - 1)];
+	}
+
+	inline int32 Count(int32 Tab)
+	{
+		return Tab == TabDiplomacy ? 5 : 6;
+	}
+
+	inline FEarthfallToolSpec Get(int32 Tab, int32 Slot)
+	{
+		if (Tab == TabOrbital)
+		{
+			const FEarthfallWeaponSpec& Weapon = EarthfallWeapons::Get(Slot);
+			return {Weapon.Name, Weapon.Descriptor, TEXT("LMB launches at the cursor.  Q/E yield   A/D size   Z/C fallout"), Weapon.Color, Weapon.Cooldown};
+		}
+		static const FEarthfallToolSpec Nature[] = {
+			{TEXT("PLAGUE RAIN"), TEXT("INFECT / SPREAD"), TEXT("Drops a drifting bio-cloud that infects the people under it."), FLinearColor(0.56f, 0.92f, 0.30f), 1.5f},
+			{TEXT("RAGE OUTBREAK"), TEXT("HOSTILE / COLLAPSE"), TEXT("Turns a region on itself: stability falls and fighting spills over borders."), FLinearColor(1.0f, 0.24f, 0.30f), 2.0f},
+			{TEXT("CURE RAIN"), TEXT("HEAL / REPAIR"), TEXT("Cures infection, clears radiation and brings power grids back."), FLinearColor(0.45f, 0.95f, 1.0f), 2.0f},
+			{TEXT("SUPER-VOLCANO"), TEXT("TECTONIC / ASH"), TEXT("Splits the crust on land: melt, an ash column and a fire front."), FLinearColor(1.0f, 0.42f, 0.08f), 3.0f},
+			{TEXT("TSUNAMI TRIGGER"), TEXT("SEA FLOOR / WAVE"), TEXT("Ruptures the sea floor in open water and releases a wave."), FLinearColor(0.35f, 0.72f, 1.0f), 2.5f},
+			{TEXT("METEOR SHOWER"), TEXT("NINE BOLIDES"), TEXT("Scatters nine bolides across a thousand kilometres."), FLinearColor(1.0f, 0.78f, 0.45f), 3.0f},
+		};
+		static const FEarthfallToolSpec Diplomacy[] = {
+			{TEXT("WHISPER OF WAR"), TEXT("CLICK A, THEN B"), TEXT("Click one nation, then another: they go to war."), FLinearColor(1.0f, 0.30f, 0.22f), 0.4f},
+			{TEXT("FORCE PEACE"), TEXT("END A NATION'S WARS"), TEXT("Click a nation at war to force a ceasefire on all its fronts."), FLinearColor(0.60f, 0.95f, 0.70f), 0.6f},
+			{TEXT("DEFENSE SATELLITE"), TEXT("ORBITAL INTERCEPTOR"), TEXT("Places a satellite over this point; it shoots down missiles for whoever lives below."), FLinearColor(0.55f, 0.85f, 1.0f), 1.0f},
+			{TEXT("STRIKE GROUP"), TEXT("NAVAL / AIR"), TEXT("Spawns a strike group at sea; it sails for the nearest hostile coast and bombards it."), FLinearColor(0.85f, 0.88f, 0.95f), 1.5f},
+			{TEXT("REBEL INSURGENCY"), TEXT("TOPPLE A GOVERNMENT"), TEXT("Starts an uprising inside the nation you click."), FLinearColor(1.0f, 0.62f, 0.20f), 1.5f},
+		};
+		if (Tab == TabNature) return Nature[FMath::Clamp(Slot, 0, 5)];
+		return Diplomacy[FMath::Clamp(Slot, 0, 4)];
+	}
+}

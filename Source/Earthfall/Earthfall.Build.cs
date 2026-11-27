@@ -7,7 +7,7 @@ public class Earthfall : ModuleRules
     public Earthfall(ReadOnlyTargetRules Target) : base(Target)
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
-        PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "Slate", "SlateCore", "Niagara" });
+        PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "Slate", "SlateCore", "Niagara", "AudioMixer", "MetasoundEngine", "MetasoundFrontend", "MetasoundGraphCore" });
         PublicDependencyModuleNames.Add("ProceduralMeshComponent");
 
         // Cesium for Unreal is optional and never committed. The streamed-terrain

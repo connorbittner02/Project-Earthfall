@@ -28,7 +28,7 @@ public:
 private:
 	enum class EFace : uint8 { Regular, Bold, Mono };
 	enum class EAlign : uint8 { Left, Center, Right };
-	enum class EButton : uint8 { SelectWeapon, MultiplierDown, MultiplierUp, CycleHud, ToggleInspect };
+	enum class EButton : uint8 { SelectWeapon, MultiplierDown, MultiplierUp, CycleHud, ToggleInspect, SelectTab, SelectTool };
 
 	struct FButton
 	{

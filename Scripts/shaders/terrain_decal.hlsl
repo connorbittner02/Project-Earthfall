@@ -103,6 +103,11 @@ float4 Main(float3 RelPos, float3 CamPos,
         x = saturate(crest * 0.7);               col = lerp(col, float3(0.74, 0.95, 1.00), x); a = a + x - a * x;
         x = ColumnShadow(n, Sun, Column, float4(0.0, 0.0, 0.0, Column.w)) * 0.55;
                                                  col = lerp(col, float3(0.0, 0.0, 0.0), x); a = a + x - a * x;
+        // Nuclear winter. Climate.x pushes the frost line from the poles toward the
+        // tropics; two noise scales make its edge a ragged front, not a parallel.
+        float frostEdge = lerp(1.45, 0.42, Atmos.z) + (VNoise(n * 9.0) - 0.5) * 0.22 + (VNoise(n * 40.0) - 0.5) * 0.06;
+        float frost = Atmos.z > 0.001 ? smoothstep(frostEdge, frostEdge + 0.10, abs(asin(clamp(n.z, -1.0, 1.0)))) : 0.0;
+        x = frost * 0.78;                        col = lerp(col, float3(0.80, 0.86, 0.92), x); a = a + x - a * x;
         x = haze;                                col = lerp(col, hazeCol, x); a = a + x - a * x;
         // Roughness is blended by the same opacity as colour, so it is glossy only
         // in proportion to how much of that opacity is flood water. 0.15 and 0.28 were

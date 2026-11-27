@@ -133,6 +133,10 @@ public:
 	bool GetCountryStats(int32 CountryId, FEarthfallCountryStats& OutStats) const;
 	/** Push a headline summarising one nation onto the news bar. */
 	void AnnounceCountry(int32 CountryId);
+	/** Put a headline on the news bar. Priority 1 (routine) to 9 (extinction-level). */
+	void PostDispatch(const FString& Text, int32 Priority) { EnqueueNews(Text, Priority); }
+	/** Kill this fraction of everyone alive, everywhere (famine, exposure). Returns the dead. */
+	double ApplyGlobalAttrition(double Fraction);
 	static const TCHAR* StabilityLabel(EEarthfallStability Stability);
 
 	/** Simulation clock shared with the ash advection shader so both use the same wind. */

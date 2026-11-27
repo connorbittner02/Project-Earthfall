@@ -126,6 +126,12 @@ bool AEarthfallHUD::HandleClick(const FVector2D& ScreenPosition, AEarthOrbitPawn
 		case EButton::ToggleInspect:
 			Pawn->ToggleInspectMode();
 			break;
+		case EButton::SelectTab:
+			Pawn->SelectTab(Entry.Value);
+			break;
+		case EButton::SelectTool:
+			Pawn->SelectTool(Entry.Value / 8, Entry.Value % 8);
+			break;
 		}
 		return true;
 	}
@@ -192,7 +198,7 @@ void AEarthfallHUD::DrawHUD()
 	DrawArsenalPanel(Pawn, W);
 	DrawReticle(Pawn, W, H);
 
-	Text(TEXT("RMB DRAG  ORBIT     WHEEL  ZOOM     LMB  LAUNCH     1-6  WEAPON     Q/E  YIELD     A/D  RADIUS     Z/C  FALLOUT     TAB  INSPECT     H  HUD     R  RESET"),
+	Text(TEXT("RMB DRAG  ORBIT     WHEEL  ZOOM     LMB  USE     TAB  TOOLS     1-6  SELECT     Q/E  YIELD     A/D  SIZE     Z/C  FALLOUT     M  INSPECT     H  HUD     R  RESET"),
 		W * 0.5f, H - Px(TickerHeight + 28.0f), 11.5f, Dim, EFace::Regular, EAlign::Center);
 	DrawDispatchTicker(Ticker, W, H);
 
@@ -252,34 +258,68 @@ void AEarthfallHUD::DrawStatusPanel(const FEarthfallTelemetry& Telemetry, const 
 
 void AEarthfallHUD::DrawArsenalPanel(const AEarthOrbitPawn* Pawn, float ScreenWidth)
 {
+	// The command dock: three tabs across the top, six tool rows, one hint line.
 	const float Width = Px(380.0f);
 	const float X = ScreenWidth - Px(Margin) - Width;
 	const float Y = Px(24.0f);
+	const float TabHeight = Px(34.0f);
 	const float RowHeight = Px(44.0f);
-	const float Height = Px(40.0f) + RowHeight * EarthfallWeapons::Count + Px(8.0f);
-	Panel(X, Y, Width, Height, TEXT("ARSENAL"));
+	const float HintHeight = Px(36.0f);
+	constexpr int32 Rows = 6;
+	const float Height = TabHeight + Px(8.0f) + RowHeight * Rows + HintHeight;
+	const int32 ActiveTab = Pawn->GetToolTab();
 
-	for (int32 Index = 0; Index < EarthfallWeapons::Count; ++Index)
+	Fill(X, Y, Width, Height, FLinearColor(0.006f, 0.012f, 0.024f, 0.90f));
+	Fill(X, Y, Px(2.0f), Height, PanelEdge);
+	Panels.Add(FBox2D(FVector2D(X, Y), FVector2D(X + Width, Y + Height)));
+
+	const float TabWidth = Width / EarthfallTools::TabCount;
+	for (int32 Tab = 0; Tab < EarthfallTools::TabCount; ++Tab)
 	{
-		const FEarthfallWeaponSpec& Spec = EarthfallWeapons::Get(Index);
-		const float RowY = Y + Px(36.0f) + RowHeight * Index;
-		const bool bSelected = Pawn->GetWeaponIndex() == Index;
-		const bool bHovered = Button(X + Px(6.0f), RowY, Width - Px(12.0f), RowHeight - Px(4.0f), EButton::SelectWeapon, Index);
+		const float TabX = X + TabWidth * Tab;
+		const bool bActive = Tab == ActiveTab;
+		const bool bHovered = Button(TabX, Y, TabWidth, TabHeight, EButton::SelectTab, Tab);
+		Fill(TabX, Y, TabWidth, TabHeight, bActive ? FLinearColor(0.10f, 0.26f, 0.36f, 0.95f)
+			: (bHovered ? FLinearColor(0.06f, 0.12f, 0.18f, 0.95f) : FLinearColor(0.02f, 0.04f, 0.07f, 0.95f)));
+		Fill(TabX, Y, TabWidth, Px(bActive ? 3.0f : 1.0f), bActive ? Cyan : PanelEdge);
+		if (Tab > 0) Fill(TabX, Y + Px(6.0f), Px(1.0f), TabHeight - Px(12.0f), PanelEdge);
+		Text(EarthfallTools::TabShortName(Tab), TabX + TabWidth * 0.5f, Y + Px(9.0f), 12.5f, bActive ? White : Dim, EFace::Bold, EAlign::Center);
+	}
+
+	const int32 ActiveSlot = Pawn->GetToolSlot(ActiveTab);
+	int32 HintSlot = ActiveSlot;
+	const float RowsTop = Y + TabHeight + Px(8.0f);
+	for (int32 Slot = 0; Slot < EarthfallTools::Count(ActiveTab); ++Slot)
+	{
+		const FEarthfallToolSpec Spec = EarthfallTools::Get(ActiveTab, Slot);
+		const float RowY = RowsTop + RowHeight * Slot;
+		const bool bSelected = ActiveSlot == Slot;
+		const bool bHovered = Button(X + Px(6.0f), RowY, Width - Px(12.0f), RowHeight - Px(4.0f), EButton::SelectTool, ActiveTab * 8 + Slot);
+		if (bHovered) HintSlot = Slot;
 		if (bSelected || bHovered)
 		{
 			Fill(X + Px(6.0f), RowY, Width - Px(12.0f), RowHeight - Px(4.0f),
-				FLinearColor(Spec.Color.R, Spec.Color.G, Spec.Color.B, bSelected ? 0.20f : 0.09f));
+				FLinearColor(Spec.Color.R, Spec.Color.G, Spec.Color.B, bSelected ? 0.24f : 0.10f));
 		}
 		if (bSelected) Fill(X + Px(6.0f), RowY, Px(4.0f), RowHeight - Px(4.0f), Spec.Color);
 
-		Text(FString::Printf(TEXT("[%d]"), Index + 1), X + Px(18.0f), RowY + Px(4.0f), 14.0f, bSelected ? Spec.Color : Dim, EFace::Mono);
+		Text(FString::Printf(TEXT("[%d]"), Slot + 1), X + Px(18.0f), RowY + Px(4.0f), 14.0f, bSelected ? Spec.Color : Dim, EFace::Mono);
 		Text(Spec.Name, X + Px(62.0f), RowY + Px(3.0f), 15.0f, bSelected ? White : Dim, EFace::Bold);
 		Text(Spec.Descriptor, X + Px(62.0f), RowY + Px(22.0f), 10.5f, bSelected ? Spec.Color : Dim);
-		if (bSelected && Pawn->GetCooldownRatio() > 0.0f)
+		if (bSelected)
 		{
-			Bar(X + Px(6.0f), RowY + RowHeight - Px(7.0f), Width - Px(12.0f), Px(3.0f), 1.0f - Pawn->GetCooldownRatio(), Spec.Color);
+			// Armed marker, and the recharge bar while the tool cools down.
+			const bool bReady = Pawn->GetCooldownRatio() <= 0.0f;
+			Text(bReady ? TEXT("ARMED") : TEXT("CHARGING"), X + Width - Px(16.0f), RowY + Px(5.0f), 10.5f, bReady ? Spec.Color : Dim, EFace::Mono, EAlign::Right);
+			if (!bReady) Bar(X + Px(6.0f), RowY + RowHeight - Px(7.0f), Width - Px(12.0f), Px(3.0f), 1.0f - Pawn->GetCooldownRatio(), Spec.Color);
 		}
 	}
+
+	const float HintY = RowsTop + RowHeight * Rows;
+	Fill(X + Px(6.0f), HintY, Width - Px(12.0f), Px(1.0f), PanelEdge);
+	Text(EarthfallTools::TabName(ActiveTab), X + Px(14.0f), HintY + Px(5.0f), 9.5f, Cyan, EFace::Bold);
+	Text(EarthfallTools::Get(ActiveTab, HintSlot).Hint, X + Px(14.0f), HintY + Px(19.0f), 9.5f, Dim);
+
 	DrawMultiplierPanel(Pawn, ScreenWidth, Y + Height + Px(12.0f));
 }
 
@@ -452,7 +492,7 @@ void AEarthfallHUD::DrawInspectButton(const AEarthOrbitPawn* Pawn)
 	const bool bHovered = Button(X, Y, Width, Height, EButton::ToggleInspect, 0);
 	Fill(X, Y, Width, Height, bActive ? FLinearColor(0.30f, 0.82f, 1.0f, 0.55f)
 		: (bHovered ? FLinearColor(0.30f, 0.82f, 1.0f, 0.30f) : TrackFill));
-	Text(bActive ? TEXT("INSPECTING  [TAB]") : TEXT("INSPECT  [TAB]"), X + Width * 0.5f, Y + Px(3.0f), 11.5f, White, EFace::Bold, EAlign::Center);
+	Text(bActive ? TEXT("INSPECTING  [M]") : TEXT("INSPECT  [M]"), X + Width * 0.5f, Y + Px(3.0f), 11.5f, White, EFace::Bold, EAlign::Center);
 }
 
 void AEarthfallHUD::DrawCountryDossier(const AEarthOrbitPawn* Pawn)

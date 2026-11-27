@@ -6,7 +6,7 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
             float3 DayTex, float3 NightTex, float3 NormalTex, float3 MasksTex,
             float3 Mask, float2 PomUV, Texture2D AshTex, SamplerState AshTexSampler,
             Texture2D CraterTex, SamplerState CraterTexSampler, float3 Wave, float3 Fire,
-            float CountryId, float4 Inspect, float4 Pom, float3 Sun, float Time, float4 CloudLayer, float4 Tuning,
+            float CountryId, float4 Inspect, float4 Pom, float3 Sun, float Time, float4 CloudLayer, float4 Tuning, float4 Climate,
             float4 A0, float4 B0, float4 C0, float4 A1, float4 B1, float4 C1,
             float4 A2, float4 B2, float4 C2, float4 A3, float4 B3, float4 C3)
 {
@@ -39,6 +39,11 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
 
     float water = MasksTex.r;
     float ice = MasksTex.b;
+    // Nuclear winter. Climate.x pushes the frost line from the poles toward the
+    // tropics; two noise scales make its edge a ragged front, not a parallel.
+    float frostEdge = lerp(1.45, 0.42, Climate.x) + (VNoise(n * 9.0) - 0.5) * 0.22 + (VNoise(n * 40.0) - 0.5) * 0.06;
+    float frost = Climate.x > 0.001 ? smoothstep(frostEdge, frostEdge + 0.10, abs(asin(clamp(n.z, -1.0, 1.0)))) : 0.0;
+    ice = max(ice, frost);
 
     // Impact mask: R carries a 0.25 EMP plateau under a 1.0 scorch core.
     float blackout = saturate(Mask.r * 4.0);
@@ -144,6 +149,8 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
     albedo *= 1.0 + (landDetail - 0.5) * 0.55 * landNear;
     albedo = lerp(albedo, albedo * float3(0.62, 0.80, 0.58), canopy * greenness * landNear * 0.7);
     albedo = lerp(albedo, float3(0.36, 0.35, 0.34) * (0.8 + 0.4 * blocks), urban * landNear * 0.40);
+    // Sea ice is whiter than frosted land, which keeps a little of its ground.
+    albedo = lerp(albedo, float3(0.80, 0.86, 0.92), frost * lerp(0.72, 0.92, water));
     // Wildfire scars: charred basalt and ash where the front has passed.
     albedo = lerp(albedo, float3(0.035, 0.030, 0.028), saturate(Fire.g * 0.92) * (1.0 - water));
     // Tsunami run-up leaves the shore dark and wet.
