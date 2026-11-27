@@ -17,7 +17,10 @@ namespace EarthfallMarkers
 	constexpr uint8 Interceptor = 1; // defensive missiles climbing to a kill
 	constexpr uint8 Debris = 2;      // Kessler debris in low orbit
 	constexpr uint8 Satellite = 3;   // defense satellites
-	constexpr uint8 Count = 4;
+	constexpr uint8 AirTraffic = 4;  // airliners between hub cities
+	constexpr uint8 Shipping = 5;    // freighters on the sea lanes
+	constexpr uint8 Combat = 6;      // fighting in a rage or insurgency zone
+	constexpr uint8 Count = 7;
 }
 
 /** One light for AEarthfallSandboxView to draw this frame. World space. */
@@ -39,6 +42,8 @@ struct FEarthfallFactionInfo
 	int32 NuclearStockpile = 0;
 	TArray<FString> AtWarWith;
 	TArray<FString> Allies;
+	/** People currently infected inside the nation's outbreaks. */
+	double Infected = 0.0;
 };
 
 /**
@@ -84,6 +89,11 @@ public:
 	float GetDebrisLevel() const { return DebrisLevel; }
 	void AddDebris(float Amount);
 	int32 GetInterceptCount() const { return InterceptCount; }
+	double GetInfected() const { return InfectedNow; }
+	double GetCured() const { return CuredTotal; }
+	double GetPlagueDead() const { return PlagueDead; }
+	/** People infected in outbreaks centred on this nation. */
+	double GetCountryInfected(int32 CountryId) const;
 
 private:
 	struct FFaction
@@ -138,6 +148,30 @@ private:
 		float Altitude = 1.12f;
 		float Speed = 0.1f;
 	};
+	/** A region of disease (0), rage (1) or insurgency (2). */
+	struct FBioZone
+	{
+		FVector Direction = FVector::ForwardVector;
+		float Radius = 0.05f;
+		float Strength = 0.2f;
+		float Age = 0.0f;
+		float SpreadTimer = 6.0f;
+		int32 Kind = 0;
+		int32 CountryId = 0;
+		int32 Generation = 0;
+		double Infected = 0.0;
+	};
+	struct FRoute
+	{
+		FVector From = FVector::ForwardVector;
+		FVector To = FVector::ForwardVector;
+		int32 FromCountry = 0;
+		int32 ToCountry = 0;
+		float Phase = 0.0f;
+		float Speed = 0.02f;
+		bool bSea = false;
+		bool bOpen = true;
+	};
 	struct FPendingMeteor
 	{
 		FVector Direction = FVector::ForwardVector;
@@ -153,6 +187,15 @@ private:
 	TArray<FDebris> Debris;
 	TArray<FPendingMeteor> PendingMeteors;
 	TArray<FEarthfallMarker> Markers;
+	TArray<FBioZone> BioZones;
+	TArray<FRoute> Routes;
+	float BioTimer = 0.0f;
+	float BioNewsTimer = 0.0f;
+	float RouteTimer = 0.0f;
+	double InfectedNow = 0.0;
+	double CuredTotal = 0.0;
+	double PlagueDead = 0.0;
+	bool bBioMaskDirty = false;
 	/** Country ID -> world time its interceptor battery has reloaded. */
 	TMap<int32, float> BatteryReadyAt;
 	TWeakObjectPtr<AEarthOrbitPawn> MeteorPawn;
@@ -187,4 +230,12 @@ private:
 	FString UseForcePeace(const FVector& LocalDirection);
 	FString UseSatellite(const FVector& LocalDirection);
 	FString UseStrikeGroup(const FVector& LocalDirection);
+	FString UsePlague(const FVector& LocalDirection);
+	FString UseRage(const FVector& LocalDirection);
+	FString UseCure(const FVector& LocalDirection);
+	FString UseInsurgency(const FVector& LocalDirection);
+	void AddBioZone(const FVector& Direction, float Radius, float Strength, int32 Kind, int32 Generation);
+	void TickBio(float DeltaTime);
+	void BuildRoutes();
+	void TickTraffic(float DeltaTime);
 };

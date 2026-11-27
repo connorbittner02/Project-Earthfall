@@ -21,8 +21,8 @@ const FLinearColor MarkerTints[] = {
 	FLinearColor(0.45f, 0.95f, 1.00f, 9.0f),  // interceptors: bright cyan
 	FLinearColor(0.95f, 0.72f, 0.48f, 3.4f),  // debris: sunlit metal
 	FLinearColor(0.55f, 0.85f, 1.00f, 5.0f),  // satellites
-	FLinearColor(1.00f, 0.90f, 0.70f, 1.3f),  // air traffic: warm white
-	FLinearColor(1.00f, 0.72f, 0.36f, 1.1f),  // shipping: amber
+	FLinearColor(0.80f, 0.92f, 1.00f, 3.6f),  // air traffic: cool white, to stand apart from city lights
+	FLinearColor(0.55f, 1.00f, 0.80f, 2.8f),  // shipping: sea green
 	FLinearColor(1.00f, 0.22f, 0.12f, 4.0f),  // combat and unrest: red
 };
 constexpr int32 MarkerKindCount = UE_ARRAY_COUNT(MarkerTints);

@@ -45,6 +45,12 @@ City locations, population distribution and all casualty, climate, grid and fall
 - Sub-orbital ejecta fly ballistic arcs under spherical gravity and fall back as re-entry streaks that start secondary fires.
 - Airborne soot turns the limb and the terrain haze amber-red and dims the sun.
 
+**Sandbox** (see `docs/worldbox-sandbox.md`)
+
+- A three-tab command dock: orbital weapons, bio and nature powers, diplomacy and spawners.
+- Fourteen AI powers with alliances, wars, missile exchanges, interceptors and a Kessler debris ring.
+- Plague, rage, cure and insurgency zones; air and sea traffic; nuclear winter; synthesised audio.
+
 ## Controls
 
 | Input | Action |
@@ -52,13 +58,14 @@ City locations, population distribution and all casualty, climate, grid and fall
 | RMB drag | Orbit |
 | Mouse wheel | Zoom, eased, down to 1.035 planet radii; the camera tilts to the horizon in low orbit |
 | LMB | Launch the selected weapon at the cursor |
-| 1-6 | Select weapon (or click a row in the Arsenal panel) |
+| Tab | Cycle the command dock's tabs |
+| 1-6 | Select a tool on the open tab (or click a row) |
 | Q / E | Yield multiplier down / up |
 | A / D | Blast radius multiplier down / up |
 | Z / C | Fallout multiplier down / up |
 | R | Reset the planet and the simulation |
 | H | Cycle HUD: full, ticker only, hidden (or click the eye button) |
-| Tab / MMB | Inspect mode: click a nation for its Country Dossier |
+| M / MMB | Inspect mode: click a nation for its Country Dossier |
 
 ## Build
 

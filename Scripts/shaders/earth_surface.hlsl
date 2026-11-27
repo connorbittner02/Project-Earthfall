@@ -5,7 +5,7 @@
 float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist,
             float3 DayTex, float3 NightTex, float3 NormalTex, float3 MasksTex,
             float3 Mask, float2 PomUV, Texture2D AshTex, SamplerState AshTexSampler,
-            Texture2D CraterTex, SamplerState CraterTexSampler, float3 Wave, float3 Fire,
+            Texture2D CraterTex, SamplerState CraterTexSampler, float3 Wave, float3 Fire, float3 Plague,
             float CountryId, float4 Inspect, float4 Pom, float3 Sun, float Time, float4 CloudLayer, float4 Tuning, float4 Climate,
             float4 A0, float4 B0, float4 C0, float4 A1, float4 B1, float4 C1,
             float4 A2, float4 B2, float4 C2, float4 A3, float4 B3, float4 C3)
@@ -215,7 +215,12 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
     // Sodium-vapour gold, as city webs look from the ISS.
     // Up close the glow breaks into individual blocks of light.
     float cityDetail = lerp(1.0, (0.08 + 4.5 * pow(sparkle, 5.0)) * 0.6, nearCity);
-    float3 emissive = NightTex * cityDetail * float3(1.0, 0.78, 0.45) * 1.30 * night * (1.0 - blackout) * Tuning.y * (1.0 - 0.7 * soot);
+    // Plague: city lights turn a sickly green-amber as infection takes hold, then
+    // go out as the people who ran them stop coming to work.
+    float infection = saturate(Plague.r);
+    float3 cityColour = lerp(float3(1.0, 0.78, 0.45), float3(0.62, 1.00, 0.22), saturate(infection * 2.2));
+    cityDetail *= 1.0 - 0.88 * saturate(infection * 2.0 - 0.9);
+    float3 emissive = NightTex * cityDetail * cityColour * 1.30 * night * (1.0 - blackout) * Tuning.y * (1.0 - 0.7 * soot);
 
     // --- Magma: ridged-noise veins that narrow and dim as the crater cools.
     // Warp the lookup so the veins meander instead of following the noise lattice.
@@ -237,6 +242,15 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
     float flames = VNoise(n * 520.0 + float3(0.0, 0.0, Time * 0.8)) * VNoise(n * 1400.0 - float3(Time * 1.1, 0.0, 0.0));
     float flicker = 0.75 + 0.25 * sin(Time * 9.0 + veins * 31.0);
     emissive += float3(1.00, 0.27, 0.04) * smoothstep(0.05, 0.6, Fire.r) * smoothstep(0.10, 0.45, flames) * flicker * 1.7 * (1.0 - water);
+
+    // --- Bio-cloud: a drifting green haze with violet in its thin edges, by day
+    // and by night. Rage and insurgency flicker red.
+    float bioNoise = VNoise(n * 60.0 + float3(Time * 0.05, 0.0, Time * 0.03)) * 0.6 + VNoise(n * 170.0 - float3(0.0, Time * 0.07, 0.0)) * 0.4;
+    float3 bioColour = lerp(float3(0.42, 0.16, 0.55), float3(0.30, 0.62, 0.10), smoothstep(0.10, 0.45, infection));
+    emissive += bioColour * smoothstep(0.02, 0.5, infection) * (0.35 + 0.65 * bioNoise) * (0.10 + 0.16 * day);
+    float rage = saturate(Plague.g);
+    emissive += float3(0.95, 0.10, 0.04) * rage * smoothstep(0.45, 0.85, VNoise(n * 900.0 + float3(Time * 2.0, 0.0, 0.0))) * (0.5 + 0.9 * night) * (1.0 - water);
+    emissive += float3(0.50, 0.05, 0.03) * rage * 0.07;
 
     // --- Fallout: a faint sickly shimmer where radioactive ash is settling.
     emissive += float3(0.30, 0.55, 0.06) * fallout * 0.05 * (0.5 + 0.5 * night);

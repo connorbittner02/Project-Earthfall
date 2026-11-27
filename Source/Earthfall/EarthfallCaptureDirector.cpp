@@ -234,14 +234,64 @@ void AEarthfallCaptureDirector::BuildScript()
 	// The debris ring, pinned high for the shot.
 	At(128.6f, [=, this]() { View(-25.0f, 18.0f, 520.0f); if (UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>()) Sandbox->AddDebris(1.0f); if (AEarthOrbitPawn* P = Pawn()) P->SetHudMode(EEarthfallHudMode::Hidden); });
 	At(130.6f, [this]() { Shot(TEXT("43-kessler-debris")); });
-	At(131.0f, [this]()
+	// R: a clean world again. Everything after this starts from a reset.
+	At(130.8f, [=, this]() { if (AEarthOrbitPawn* P = Pawn()) { P->ResetSimulation(); P->SetHudMode(EEarthfallHudMode::Full); } View(-85.0f, 22.0f, 420.0f); });
+	At(132.6f, [this]() { Shot(TEXT("44-clean-reset")); });
+	// Living traffic over the North Atlantic at night.
+	At(132.7f, [=, this]() { View(70.0f, 30.0f, 300.0f); if (AEarthOrbitPawn* P = Pawn()) P->SetHudMode(EEarthfallHudMode::Hidden); });
+	At(134.4f, [this]() { Shot(TEXT("45-living-traffic")); });
+	// Plague Rain on the Ganges plain: the cloud, green city lights, and spread.
+	At(134.5f, [=, this]()
+	{
+		View(82.0f, 25.0f, 235.0f);
+		AEarthOrbitPawn* P = Pawn();
+		UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>();
+		if (!P || !Sandbox) return;
+		P->SetHudMode(EEarthfallHudMode::Full);
+		P->SelectTool(EarthfallTools::TabNature, EarthfallTools::PlagueRain);
+		Sandbox->UseTool(EarthfallTools::TabNature, EarthfallTools::PlagueRain, EarthfallSolar::DirectionFromLatLon(26.5, 81.0), P);
+	});
+	At(141.0f, [this]() { Shot(TEXT("46-plague-rain")); });
+	At(141.1f, [this]() { if (AEarthOrbitPawn* P = Pawn()) P->InspectDirection(EarthfallSolar::DirectionFromLatLon(26.5, 81.0)); });
+	At(160.0f, [this]() { Shot(TEXT("47-plague-spread")); });
+	// Cure Rain over the same ground.
+	At(160.1f, [this]()
+	{
+		AEarthOrbitPawn* P = Pawn();
+		UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>();
+		if (!P || !Sandbox) return;
+		P->ToggleInspectMode();
+		P->SelectTool(EarthfallTools::TabNature, EarthfallTools::CureRain);
+		Sandbox->UseTool(EarthfallTools::TabNature, EarthfallTools::CureRain, EarthfallSolar::DirectionFromLatLon(26.5, 81.0), P);
+	});
+	At(162.0f, [this]() { Shot(TEXT("48-cure-rain")); });
+	// Rage in Central Europe and a rebel insurgency in Egypt.
+	At(162.1f, [=, this]()
+	{
+		View(22.0f, 40.0f, 250.0f);
+		AEarthOrbitPawn* P = Pawn();
+		UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>();
+		if (!P || !Sandbox) return;
+		P->SelectTool(EarthfallTools::TabDiplomacy, EarthfallTools::RebelInsurgency);
+		Sandbox->UseTool(EarthfallTools::TabNature, EarthfallTools::RageOutbreak, EarthfallSolar::DirectionFromLatLon(50.0, 19.0), P);
+		Sandbox->UseTool(EarthfallTools::TabDiplomacy, EarthfallTools::RebelInsurgency, EarthfallSolar::DirectionFromLatLon(30.0, 31.2), P);
+	});
+	At(170.0f, [this]() { Shot(TEXT("49-rage-and-insurgency")); });
+	At(170.5f, [this]()
+	{
+		if (const UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>())
+		{
+			UE_LOG(LogEarthfallCapture, Display, TEXT("EARTHFALL_CAPTURE bio infected=%.0f cured=%.0f dead=%.0f"), Sandbox->GetInfected(), Sandbox->GetCured(), Sandbox->GetPlagueDead());
+		}
+	});
+	At(130.7f, [this]()
 	{
 		if (const UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>())
 		{
 			UE_LOG(LogEarthfallCapture, Display, TEXT("EARTHFALL_CAPTURE sandbox intercepts=%d debris=%.2f"), Sandbox->GetInterceptCount(), Sandbox->GetDebrisLevel());
 		}
-		Finish();
 	});
+	At(171.0f, [this]() { Finish(); });
 
 	Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
 }

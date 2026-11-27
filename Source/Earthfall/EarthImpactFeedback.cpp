@@ -15,11 +15,11 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 namespace
 {
 constexpr int32 RingSegments = 96;
-constexpr float EngineSphereRadius = 50.0f;
+constexpr float FeedbackSphereRadius = 50.0f;
 /** The ring rides just above the high cloud deck so it reads over weather. */
 constexpr float RingAltitudeScale = 1.024f;
 /** Effects draw after the planet's cloud and atmosphere shells (priorities 10-12). */
-constexpr int32 EffectSortPriority = 20;
+constexpr int32 FeedbackSortPriority = 20;
 }
 
 AEarthImpactFeedback::AEarthImpactFeedback()
@@ -43,7 +43,7 @@ AEarthImpactFeedback::AEarthImpactFeedback()
 		Component->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		Component->SetGenerateOverlapEvents(false);
 		Component->SetCastShadow(false);
-		Component->SetTranslucentSortPriority(EffectSortPriority);
+		Component->SetTranslucentSortPriority(FeedbackSortPriority);
 		Component->SetVisibility(false);
 		return Component;
 	};
@@ -59,7 +59,7 @@ AEarthImpactFeedback::AEarthImpactFeedback()
 	ShockRing->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	ShockRing->SetGenerateOverlapEvents(false);
 	ShockRing->SetCastShadow(false);
-	ShockRing->SetTranslucentSortPriority(EffectSortPriority);
+	ShockRing->SetTranslucentSortPriority(FeedbackSortPriority);
 
 	static ConstructorHelpers::FObjectFinder<UNiagaraSystem> ImpactSystem(TEXT("/Game/Earthfall/FX/NS_EarthfallImpact.NS_EarthfallImpact"));
 	static ConstructorHelpers::FObjectFinder<UNiagaraSystem> SmokeSystem(TEXT("/Game/Earthfall/FX/NS_EarthfallSmoke.NS_EarthfallSmoke"));
@@ -74,7 +74,7 @@ AEarthImpactFeedback::AEarthImpactFeedback()
 		Component->SetAsset(System);
 		Component->SetAutoActivate(false);
 		Component->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		Component->SetTranslucentSortPriority(EffectSortPriority);
+		Component->SetTranslucentSortPriority(FeedbackSortPriority);
 		return Component;
 	};
 	ImpactFireballFX = MakeNiagara(TEXT("ImpactFireballFX"), ImpactSystem.Succeeded() ? ImpactSystem.Object : nullptr);
@@ -194,7 +194,7 @@ void AEarthImpactFeedback::UpdateFireball()
 			: FMath::Lerp(EndTones[Params.WeaponIndex], MidTones[Params.WeaponIndex], Heat / 0.7f);
 		const float Intensity = (bNuclear ? 6.0f : 3.2f) * YieldGain * FMath::Pow(Heat, 1.5f);
 		Fireball->SetWorldLocation(GroundZero + Params.Normal * FireballRadius * 0.25f * U);
-		Fireball->SetWorldScale3D(FVector(FMath::Max(Radius, 0.01f) / EngineSphereRadius));
+		Fireball->SetWorldScale3D(FVector(FMath::Max(Radius, 0.01f) / FeedbackSphereRadius));
 		FireballMID->SetVectorParameterValue(TEXT("Tint"), FLinearColor(Tone.R, Tone.G, Tone.B, Intensity));
 		Fireball->SetVisibility(Heat > 0.001f);
 	}
@@ -208,7 +208,7 @@ void AEarthImpactFeedback::UpdateFireball()
 		const FLinearColor Tone = FMath::Lerp(FLinearColor(1.0f, 0.55f, 0.16f), FLinearColor(0.42f, 0.12f, 0.05f), U);
 		const float Intensity = Age < 0.25f ? 0.0f : 1.6f * YieldGain * FMath::Square(1.0f - U);
 		RisingCap->SetWorldLocation(GroundZero + Params.Normal * FireballRadius * FMath::Lerp(0.3f, 1.7f, FMath::Sqrt(U)));
-		RisingCap->SetWorldScale3D(FVector(Radius / EngineSphereRadius));
+		RisingCap->SetWorldScale3D(FVector(Radius / FeedbackSphereRadius));
 		CapMID->SetVectorParameterValue(TEXT("Tint"), FLinearColor(Tone.R, Tone.G, Tone.B, Intensity));
 	}
 }

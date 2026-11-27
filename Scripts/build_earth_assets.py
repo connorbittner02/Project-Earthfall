@@ -281,6 +281,7 @@ def build_surface(day, night, normal, masks, countries, black):
         ("CraterTex", crater, ""),
         ("Wave", texture_sample(material, "TsunamiRT", black, color, 950, pom), "RGB"),
         ("Fire", texture_sample(material, "FireMaskRT", black, color, 980, pom), "RGB"),
+        ("Plague", texture_sample(material, "PlagueRT", black, color, 990, pom), "RGB"),
         ("CountryId", texture_sample(material, "CountryIDTexture", countries, unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_GRAYSCALE, 1000, pom), "R"),
         ("Inspect", vector_parameter(material, "Inspect", (0.0, 0.0, 0.0, 0.0), 1050), "RGBA"),
         ("Pom", pom_parameters, "RGBA"),

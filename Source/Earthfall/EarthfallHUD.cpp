@@ -25,7 +25,7 @@ const FLinearColor PanelEdge(0.30f, 0.82f, 1.0f, 0.55f);
 const FLinearColor TrackFill(0.10f, 0.14f, 0.20f, 0.90f);
 constexpr float Margin = 36.0f;
 constexpr float TickerHeight = 44.0f;
-constexpr double EarthRadiusKm = 6371.0;
+constexpr double HudEarthRadiusKm = 6371.0;
 
 FSlateFontInfo MakeFont(bool bBold, bool bMono, float Pixels)
 {
@@ -360,7 +360,7 @@ void AEarthfallHUD::DrawMultiplierPanel(const AEarthOrbitPawn* Pawn, float Scree
 	// What the dials add up to for the selected weapon.
 	const FEarthfallWeaponSpec& Spec = EarthfallWeapons::Get(Pawn->GetWeaponIndex());
 	const float SummaryY = Top + Px(38.0f) + RowHeight * Kinds + Px(6.0f);
-	const double RadiusKm = Pawn->GetCurrentBlastRadius() / 100.0 * EarthRadiusKm;
+	const double RadiusKm = Pawn->GetCurrentBlastRadius() / 100.0 * HudEarthRadiusKm;
 	Text(TEXT("BLAST ZONE"), X + Px(14.0f), SummaryY, 11.0f, Dim);
 	Text(FString::Printf(TEXT("%.0f km"), RadiusKm), X + Width - Px(14.0f), SummaryY - Px(1.0f), 13.0f, Spec.Color, EFace::Mono, EAlign::Right);
 	// The multipliers in real units: blast radius scales the body, yield its
@@ -416,7 +416,7 @@ void AEarthfallHUD::DrawReticle(const AEarthOrbitPawn* Pawn, float ScreenWidth, 
 		FMath::Abs(Latitude), Latitude >= 0.0 ? TEXT("N") : TEXT("S"),
 		FMath::Abs(Longitude), Longitude >= 0.0 ? TEXT("E") : TEXT("W")),
 		Cursor.X + Px(20.0f), Cursor.Y + Px(14.0f), 11.5f, Spec.Color, EFace::Mono);
-	Text(FString::Printf(TEXT("%s  //  %.0f km"), Spec.Name, Pawn->GetCurrentBlastRadius() / 100.0 * EarthRadiusKm),
+	Text(FString::Printf(TEXT("%s  //  %.0f km"), Spec.Name, Pawn->GetCurrentBlastRadius() / 100.0 * HudEarthRadiusKm),
 		Cursor.X + Px(20.0f), Cursor.Y + Px(32.0f), 11.5f, White, EFace::Mono);
 }
 
@@ -518,7 +518,8 @@ void AEarthfallHUD::DrawCountryDossier(const AEarthOrbitPawn* Pawn)
 	FEarthfallFactionInfo Faction;
 	const UEarthfallSandboxSubsystem* Sandbox = World->GetSubsystem<UEarthfallSandboxSubsystem>();
 	const bool bFaction = Sandbox && Sandbox->GetFactionInfo(Stats.Id, Faction);
-	Panel(X, Y, Width, Px(72.0f) + RowHeight * (bFaction ? 11 : 7) + Px(10.0f), TEXT("COUNTRY DOSSIER"));
+	const double CountryInfected = Sandbox ? Sandbox->GetCountryInfected(Stats.Id) : 0.0;
+	Panel(X, Y, Width, Px(72.0f) + RowHeight * ((bFaction ? 11 : 7) + (CountryInfected >= 1.0 ? 1 : 0)) + Px(10.0f), TEXT("COUNTRY DOSSIER"));
 	Text(Stats.Name.ToUpper(), X + Px(14.0f), Y + Px(34.0f), 19.0f, White, EFace::Bold);
 	float RowY = Y + Px(70.0f);
 	const float LabelX = X + Px(14.0f);
@@ -545,6 +546,10 @@ void AEarthfallHUD::DrawCountryDossier(const AEarthOrbitPawn* Pawn)
 	static const FLinearColor StabilityColors[] = {Green, Orange, Red, FLinearColor(0.75f, 0.20f, 0.95f, 1.0f)};
 	Row(TEXT("GOVERNMENT"), UEarthfallPopulationSubsystem::StabilityLabel(Stats.Stability),
 		StabilityColors[static_cast<int32>(Stats.Stability)]);
+	if (CountryInfected >= 1.0)
+	{
+		Row(TEXT("INFECTED"), FString::Printf(TEXT("%s  //  CURED %s"), *FormatPeople(CountryInfected), *FormatPeople(Sandbox->GetCured())), FLinearColor(0.62f, 1.0f, 0.22f, 1.0f));
+	}
 	if (bFaction)
 	{
 		// The nation as a power: what it can throw, and at whom.

@@ -888,3 +888,75 @@ double UEarthfallPopulationSubsystem::ApplyGlobalAttrition(double Fraction)
 	}
 	return Dead;
 }
+
+void UEarthfallPopulationSubsystem::ForEachCellInRadius(const FVector& LocalDirection, float RadiusRadians, TFunctionRef<void(FEarthfallPopulationCell&)> Visit)
+{
+	if (Cells.Num() != GridWidth * GridHeight) return;
+	const FVector Centre = LocalDirection.GetSafeNormal();
+	const double Latitude = FMath::Asin(FMath::Clamp(Centre.Z, -1.0, 1.0));
+	const double CosLimit = FMath::Cos(static_cast<double>(RadiusRadians));
+	// Only the rows of the latitude band the circle can touch.
+	const int32 FirstRow = FMath::Clamp(FMath::FloorToInt((PI * 0.5 - (Latitude + RadiusRadians)) / PI * GridHeight), 0, GridHeight - 1);
+	const int32 LastRow = FMath::Clamp(FMath::CeilToInt((PI * 0.5 - (Latitude - RadiusRadians)) / PI * GridHeight), 0, GridHeight - 1);
+	for (int32 Y = FirstRow; Y <= LastRow; ++Y)
+	{
+		const double CellLatitude = PI * 0.5 - (Y + 0.5) / GridHeight * PI;
+		const double CosLat = FMath::Cos(CellLatitude);
+		const double SinLat = FMath::Sin(CellLatitude);
+		for (int32 X = 0; X < GridWidth; ++X)
+		{
+			const double Longitude = (X + 0.5) / GridWidth * 2.0 * PI - PI;
+			const FVector Direction(CosLat * FMath::Cos(Longitude), -CosLat * FMath::Sin(Longitude), SinLat);
+			if (FVector::DotProduct(Direction, Centre) >= CosLimit) Visit(Cells[Y * GridWidth + X]);
+		}
+	}
+}
+
+double UEarthfallPopulationSubsystem::PopulationInRadius(const FVector& LocalDirection, float RadiusRadians) const
+{
+	double Total = 0.0;
+	const_cast<UEarthfallPopulationSubsystem*>(this)->ForEachCellInRadius(LocalDirection, RadiusRadians,
+		[&Total](FEarthfallPopulationCell& Cell) { Total += Cell.LivingPopulation; });
+	return Total;
+}
+
+double UEarthfallPopulationSubsystem::ApplyRegionalAttrition(const FVector& LocalDirection, float RadiusRadians, double KillFraction, double DisplaceFraction, float GridDamage)
+{
+	KillFraction = FMath::Clamp(KillFraction, 0.0, 1.0);
+	DisplaceFraction = FMath::Clamp(DisplaceFraction, 0.0, 1.0);
+	double Dead = 0.0;
+	ForEachCellInRadius(LocalDirection, RadiusRadians, [&](FEarthfallPopulationCell& Cell)
+	{
+		Cell.PowerGridHealth = FMath::Clamp(Cell.PowerGridHealth - GridDamage, 0.0f, 1.0f);
+		if (Cell.LivingPopulation <= 0.0) return;
+		const double Loss = Cell.LivingPopulation * KillFraction;
+		Cell.LivingPopulation -= Loss;
+		Cell.DisplacedPopulation = FMath::Min(Cell.LivingPopulation,
+			Cell.DisplacedPopulation + (Cell.LivingPopulation - Cell.DisplacedPopulation) * DisplaceFraction);
+		Dead += Loss;
+	});
+	if (Dead > 0.0 || GridDamage > 0.0f)
+	{
+		Telemetry.TotalCasualties += Dead;
+		RefreshPopulationTotals();
+	}
+	return Dead;
+}
+
+void UEarthfallPopulationSubsystem::RepairRegion(const FVector& LocalDirection, float RadiusRadians)
+{
+	ForEachCellInRadius(LocalDirection, RadiusRadians, [](FEarthfallPopulationCell& Cell)
+	{
+		Cell.PowerGridHealth = 1.0f;
+		Cell.HazardHeat = 0.0f;
+		Cell.DisplacedPopulation *= 0.25;
+	});
+	// Fallout plumes centred in the blessed region rain out.
+	const FVector Centre = LocalDirection.GetSafeNormal();
+	Plumes.RemoveAll([&](const FEarthfallAshPlume& Plume)
+	{
+		const FVector Direction(FMath::Cos(Plume.Latitude) * FMath::Cos(Plume.Longitude), -FMath::Cos(Plume.Latitude) * FMath::Sin(Plume.Longitude), FMath::Sin(Plume.Latitude));
+		return FVector::DotProduct(Direction, Centre) >= FMath::Cos(RadiusRadians);
+	});
+	RefreshPopulationTotals();
+}

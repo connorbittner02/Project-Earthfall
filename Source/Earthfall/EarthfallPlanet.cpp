@@ -977,6 +977,7 @@ void AEarthfallPlanet::BindSimulationTextures()
 	if (!SurfaceMID) return;
 	if (TsunamiRTs.IsValidIndex(TsunamiReadIndex)) SurfaceMID->SetTextureParameterValue(TEXT("TsunamiRT"), TsunamiRTs[TsunamiReadIndex]);
 	if (FireRTs.IsValidIndex(FireReadIndex)) SurfaceMID->SetTextureParameterValue(TEXT("FireMaskRT"), FireRTs[FireReadIndex]);
+	if (PlagueRT) SurfaceMID->SetTextureParameterValue(TEXT("PlagueRT"), PlagueRT);
 }
 
 void AEarthfallPlanet::StampInto(UTextureRenderTarget2D* Target, UTexture2D* Texture, const FVector& LocalDirection, float AngularRadius, const FLinearColor& Tint)
@@ -1098,4 +1099,32 @@ void AEarthfallPlanet::UpdateWinter(float DeltaSeconds)
 		FamineNewsTimer = 0.0f;
 		FamineDeadSinceNews = 0.0;
 	}
+}
+
+void AEarthfallPlanet::SetBioZones(const TArray<FVector4>& Zones, const TArray<FLinearColor>& Colours)
+{
+	if (!GetWorld()) return;
+	if (!PlagueRT)
+	{
+		PlagueRT = NewObject<UTextureRenderTarget2D>(this, TEXT("PlagueRT"));
+		PlagueRT->RenderTargetFormat = ETextureRenderTargetFormat::RTF_RGBA8;
+		PlagueRT->ClearColor = FLinearColor::Black;
+		PlagueRT->AddressX = TA_Wrap;
+		PlagueRT->AddressY = TA_Clamp;
+		PlagueRT->Filter = TF_Bilinear;
+		PlagueRT->InitAutoFormat(512, 256);
+		PlagueRT->UpdateResourceImmediate(true);
+		BindSimulationTextures();
+	}
+	UKismetRenderingLibrary::ClearRenderTarget2D(GetWorld(), PlagueRT, FLinearColor::Black);
+	if (Zones.IsEmpty() || Zones.Num() != Colours.Num()) return;
+	UCanvas* Canvas = nullptr;
+	FVector2D CanvasSize;
+	FDrawToRenderTargetContext Context;
+	UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(GetWorld(), PlagueRT, Canvas, CanvasSize, Context);
+	for (int32 Index = 0; Index < Zones.Num(); ++Index)
+	{
+		DrawStamp(Canvas, CanvasSize, AshStampTexture, FVector(Zones[Index].X, Zones[Index].Y, Zones[Index].Z), Zones[Index].W, Colours[Index]);
+	}
+	UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(GetWorld(), Context);
 }

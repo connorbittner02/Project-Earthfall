@@ -92,6 +92,12 @@ void UEarthfallSandboxSubsystem::ResetSandbox()
 	DebrisNewsLevel = 0.0f;
 	PendingWarCountry = 0;
 	InterceptCount = 0;
+	BioZones.Reset();
+	Routes.Reset();
+	InfectedNow = 0.0;
+	CuredTotal = 0.0;
+	PlagueDead = 0.0;
+	if (AEarthfallPlanet* Planet = FindPlanet()) Planet->SetBioZones(TArray<FVector4>(), TArray<FLinearColor>());
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +224,7 @@ bool UEarthfallSandboxSubsystem::GetFactionInfo(int32 CountryId, FEarthfallFacti
 	OutInfo.Code = Faction.Code;
 	OutInfo.MilitaryStrength = Faction.MilitaryStrength;
 	OutInfo.NuclearStockpile = Faction.NuclearStockpile;
+	OutInfo.Infected = GetCountryInfected(CountryId);
 	OutInfo.AtWarWith.Reset();
 	OutInfo.Allies.Reset();
 	for (int32 Enemy : Faction.AtWar) if (Factions.IsValidIndex(Enemy)) OutInfo.AtWarWith.Add(Factions[Enemy].Code);
@@ -276,6 +283,8 @@ void UEarthfallSandboxSubsystem::Tick(float DeltaTime)
 	TickUnits(DeltaTime);
 	TickDefense(DeltaTime);
 	TickDebrisField(DeltaTime);
+	TickBio(DeltaTime);
+	TickTraffic(DeltaTime);
 	BuildMarkers();
 }
 
@@ -585,6 +594,43 @@ void UEarthfallSandboxSubsystem::BuildMarkers()
 		Marker.Stretch = 1.6f;
 		Marker.Kind = EarthfallMarkers::Satellite;
 	}
+	// Fighting flickers inside rage and insurgency zones.
+	for (const FBioZone& Zone : BioZones)
+	{
+		if (Zone.Kind == 0) continue;
+		FVector TangentA;
+		FVector TangentB;
+		Zone.Direction.FindBestAxisVectors(TangentA, TangentB);
+		for (int32 Spark = 0; Spark < 7; ++Spark)
+		{
+			// Each spark relights somewhere new a few times a second.
+			FRandomStream Random(GetTypeHash(Zone.Direction) + Spark * 131 + FMath::FloorToInt(WorldTime * 3.0f + Spark * 0.37f));
+			const float Angle = Random.FRandRange(0.0f, 2.0f * PI);
+			const FVector Local = (Zone.Direction + (TangentA * FMath::Cos(Angle) + TangentB * FMath::Sin(Angle)) * Random.FRandRange(0.0f, Zone.Radius * 0.8f)).GetSafeNormal();
+			FEarthfallMarker& Marker = Markers.AddDefaulted_GetRef();
+			Marker.Position = Center + Transform.TransformVectorNoScale(Local) * Radius * 1.004f;
+			Marker.Size = 0.12f;
+			Marker.Kind = EarthfallMarkers::Combat;
+		}
+	}
+	// Airliners and freighters, wherever their routes are still open.
+	for (const FRoute& Route : Routes)
+	{
+		if (!Route.bOpen) continue;
+		const float Span = FMath::Acos(FMath::Clamp(static_cast<float>(FVector::DotProduct(Route.From, Route.To)), -1.0f, 1.0f));
+		if (Span < 1.0e-3f) continue;
+		// Out and back along the great circle.
+		const float Cycle = FMath::Frac(Route.Phase + WorldTime * Route.Speed / Span);
+		const float Along = Cycle < 0.5f ? Cycle * 2.0f : 2.0f - Cycle * 2.0f;
+		const FVector Local = FVector::SlerpNormals(Route.From, Route.To, Along);
+		const FVector Ahead = FVector::SlerpNormals(Route.From, Route.To, FMath::Clamp(Along + (Cycle < 0.5f ? 0.02f : -0.02f), 0.0f, 1.0f));
+		FEarthfallMarker& Marker = Markers.AddDefaulted_GetRef();
+		Marker.Position = Center + Transform.TransformVectorNoScale(Local) * Radius * (Route.bSea ? 1.003f : 1.024f);
+		Marker.Forward = Transform.TransformVectorNoScale(Ahead - Local).GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector);
+		Marker.Size = Route.bSea ? 0.13f : 0.11f;
+		Marker.Stretch = Route.bSea ? 1.8f : 4.5f;
+		Marker.Kind = Route.bSea ? EarthfallMarkers::Shipping : EarthfallMarkers::AirTraffic;
+	}
 	// The debris ring fills in piece by piece as the level climbs.
 	const int32 Visible = FMath::Min(Debris.Num(), FMath::RoundToInt32(Debris.Num() * FMath::SmoothStep(0.03f, 0.95f, DebrisLevel)));
 	for (int32 Index = 0; Index < Visible; ++Index)
@@ -613,6 +659,9 @@ FString UEarthfallSandboxSubsystem::UseTool(int32 Tab, int32 Slot, const FVector
 		case EarthfallTools::Volcano: return UseVolcano(LocalDirection);
 		case EarthfallTools::Tsunami: return UseTsunami(LocalDirection);
 		case EarthfallTools::MeteorShower: return UseMeteorShower(LocalDirection, Pawn);
+		case EarthfallTools::PlagueRain: return UsePlague(LocalDirection);
+		case EarthfallTools::RageOutbreak: return UseRage(LocalDirection);
+		case EarthfallTools::CureRain: return UseCure(LocalDirection);
 		default: break;
 		}
 	}
@@ -624,6 +673,7 @@ FString UEarthfallSandboxSubsystem::UseTool(int32 Tab, int32 Slot, const FVector
 		case EarthfallTools::ForcePeace: return UseForcePeace(LocalDirection);
 		case EarthfallTools::DefenseSatellite: return UseSatellite(LocalDirection);
 		case EarthfallTools::StrikeGroup: return UseStrikeGroup(LocalDirection);
+		case EarthfallTools::RebelInsurgency: return UseInsurgency(LocalDirection);
 		default: break;
 		}
 	}
@@ -753,4 +803,290 @@ FString UEarthfallSandboxSubsystem::UseMeteorShower(const FVector& LocalDirectio
 		People->PostDispatch(TEXT("[IMPACT] METEOR SHOWER INBOUND  //  MULTIPLE BOLIDES ON TERMINAL TRACK"), 5);
 	}
 	return TEXT("METEOR SHOWER  //  9 BOLIDES INBOUND");
+}
+
+// ---------------------------------------------------------------------------
+// Plague, rage, insurgency and cure
+// ---------------------------------------------------------------------------
+void UEarthfallSandboxSubsystem::AddBioZone(const FVector& Direction, float ZoneRadius, float Strength, int32 Kind, int32 Generation)
+{
+	if (BioZones.Num() >= 40) return;
+	UEarthfallPopulationSubsystem* People = Population();
+	FBioZone& Zone = BioZones.AddDefaulted_GetRef();
+	Zone.Direction = Direction.GetSafeNormal();
+	Zone.Radius = ZoneRadius;
+	Zone.Strength = Strength;
+	Zone.Kind = Kind;
+	Zone.Generation = Generation;
+	Zone.CountryId = People ? People->GetCountryAtDirection(Zone.Direction) : 0;
+	Zone.SpreadTimer = FMath::FRandRange(4.0f, 7.0f);
+	bBioMaskDirty = true;
+}
+
+double UEarthfallSandboxSubsystem::GetCountryInfected(int32 CountryId) const
+{
+	double Total = 0.0;
+	for (const FBioZone& Zone : BioZones)
+	{
+		if (Zone.Kind == 0 && Zone.CountryId == CountryId) Total += Zone.Infected;
+	}
+	return Total;
+}
+
+void UEarthfallSandboxSubsystem::TickBio(float DeltaTime)
+{
+	UEarthfallPopulationSubsystem* People = Population();
+	AEarthfallPlanet* Planet = FindPlanet();
+	if (!People || !Planet) return;
+	if (BioZones.IsEmpty() && !bBioMaskDirty) return;
+
+	// The cloud drifts on the same wind as the ash; unrest stays where it is.
+	const double WindTime = People->GetWindTime();
+	for (FBioZone& Zone : BioZones)
+	{
+		Zone.Age += DeltaTime;
+		if (Zone.Kind != 0) continue;
+		const double Latitude = FMath::Asin(FMath::Clamp(Zone.Direction.Z, -1.0, 1.0));
+		const double Longitude = FMath::Atan2(-Zone.Direction.Y, Zone.Direction.X);
+		const FVector2D Wind = EarthfallWind::Velocity(Latitude, Longitude, WindTime);
+		const double NewLatitude = FMath::Clamp(Latitude + Wind.Y * DeltaTime * 0.35, -1.4, 1.4);
+		const double NewLongitude = Longitude + Wind.X * DeltaTime * 0.35 / FMath::Max(FMath::Cos(Latitude), 0.2);
+		Zone.Direction = FVector(FMath::Cos(NewLatitude) * FMath::Cos(NewLongitude), -FMath::Cos(NewLatitude) * FMath::Sin(NewLongitude), FMath::Sin(NewLatitude));
+	}
+
+	BioTimer += DeltaTime;
+	if (BioTimer >= 0.5f)
+	{
+		const float Step = BioTimer;
+		BioTimer = 0.0f;
+		double Infected = 0.0;
+		for (int32 Index = BioZones.Num() - 1; Index >= 0; --Index)
+		{
+			FBioZone& Zone = BioZones[Index];
+			if (Zone.Kind == 0)
+			{
+				// Infection climbs, the cloud widens, and a slice of the infected die.
+				Zone.Strength = FMath::Min(Zone.Strength + 0.035f * Step, 1.0f);
+				Zone.Radius = FMath::Min(Zone.Radius + 0.0016f * Step, 0.16f);
+				Zone.Infected = People->PopulationInRadius(Zone.Direction, Zone.Radius) * Zone.Strength * 0.6;
+				PlagueDead += People->ApplyRegionalAttrition(Zone.Direction, Zone.Radius, 0.0022 * Zone.Strength * Step, 0.004 * Zone.Strength * Step, 0.004f * Zone.Strength * Step);
+				Infected += Zone.Infected;
+				// It travels: by air to a hub city, or over the nearest border.
+				Zone.SpreadTimer -= Step;
+				if (Zone.SpreadTimer <= 0.0f && Zone.Generation < 3 && Zone.Strength > 0.45f)
+				{
+					Zone.SpreadTimer = FMath::FRandRange(7.0f, 12.0f);
+					FVector Destination = Zone.Direction;
+					if (!Routes.IsEmpty() && FMath::FRand() < 0.6f)
+					{
+						// Carried along whichever open air route starts nearest the outbreak.
+						float Best = 0.90f;
+						for (const FRoute& Route : Routes)
+						{
+							if (Route.bSea || !Route.bOpen) continue;
+							const float NearFrom = static_cast<float>(FVector::DotProduct(Route.From, Zone.Direction));
+							const float NearTo = static_cast<float>(FVector::DotProduct(Route.To, Zone.Direction));
+							if (NearFrom > Best) { Best = NearFrom; Destination = Route.To; }
+							if (NearTo > Best) { Best = NearTo; Destination = Route.From; }
+						}
+					}
+					if (Destination.Equals(Zone.Direction))
+					{
+						FVector TangentA;
+						FVector TangentB;
+						Zone.Direction.FindBestAxisVectors(TangentA, TangentB);
+						const float Angle = FMath::FRandRange(0.0f, 2.0f * PI);
+						Destination = (Zone.Direction + (TangentA * FMath::Cos(Angle) + TangentB * FMath::Sin(Angle)) * (Zone.Radius * 1.7f)).GetSafeNormal();
+					}
+					const int32 DestinationCountry = People->GetCountryAtDirection(Destination);
+					if (DestinationCountry > 0)
+					{
+						const int32 Generation = Zone.Generation + 1;
+						FEarthfallCountryStats Stats;
+						if (DestinationCountry != Zone.CountryId && People->GetCountryStats(DestinationCountry, Stats))
+						{
+							People->PostDispatch(FString::Printf(TEXT("[PLAGUE] OUTBREAK REACHES %s  //  %.1f MILLION INFECTED WORLDWIDE"), *Stats.Name.ToUpper(), InfectedNow / 1.0e6), 5);
+						}
+						AddBioZone(Destination, 0.035f, 0.12f, 0, Generation);
+					}
+				}
+			}
+			else
+			{
+				// Rage and insurgency: people turn on each other and on the grid.
+				const bool bRage = Zone.Kind == 1;
+				People->ApplyRegionalAttrition(Zone.Direction, Zone.Radius, (bRage ? 0.006 : 0.004) * Step, (bRage ? 0.03 : 0.045) * Step, (bRage ? 0.02f : 0.03f) * Step);
+				Zone.SpreadTimer -= Step;
+				if (bRage && Zone.SpreadTimer <= 0.0f && Zone.Generation < 2)
+				{
+					// Rage spills over the nearest border.
+					Zone.SpreadTimer = FMath::FRandRange(6.0f, 9.0f);
+					FVector TangentA;
+					FVector TangentB;
+					Zone.Direction.FindBestAxisVectors(TangentA, TangentB);
+					const float Angle = FMath::FRandRange(0.0f, 2.0f * PI);
+					const FVector Destination = (Zone.Direction + (TangentA * FMath::Cos(Angle) + TangentB * FMath::Sin(Angle)) * (Zone.Radius * 1.6f)).GetSafeNormal();
+					const int32 Generation = Zone.Generation + 1;
+					if (People->GetCountryAtDirection(Destination) > 0) AddBioZone(Destination, Zone.Radius * 0.8f, 0.8f, 1, Generation);
+				}
+				// It burns itself out; an insurgency ends when the government falls.
+				FEarthfallCountryStats Stats;
+				const bool bToppled = Zone.Kind == 2 && People->GetCountryStats(Zone.CountryId, Stats) && Stats.Stability == EEarthfallStability::Collapsed;
+				if (bToppled)
+				{
+					People->PostDispatch(FString::Printf(TEXT("[COUP] REBELS TOPPLE THE GOVERNMENT OF %s"), *Stats.Name.ToUpper()), 7);
+				}
+				if (bToppled || Zone.Age > (bRage ? 26.0f : 40.0f))
+				{
+					BioZones.RemoveAtSwap(Index);
+				}
+			}
+		}
+		InfectedNow = Infected;
+		bBioMaskDirty = true;
+
+		BioNewsTimer += Step;
+		if (BioNewsTimer >= 12.0f && InfectedNow >= 1.0e5)
+		{
+			BioNewsTimer = 0.0f;
+			People->PostDispatch(FString::Printf(TEXT("[PLAGUE] INFECTED %.1f MILLION  //  CURED %.1f MILLION  //  DEAD %.1f MILLION"),
+				InfectedNow / 1.0e6, CuredTotal / 1.0e6, PlagueDead / 1.0e6), 5);
+		}
+	}
+
+	if (bBioMaskDirty)
+	{
+		bBioMaskDirty = false;
+		TArray<FVector4> Zones;
+		TArray<FLinearColor> Colours;
+		for (const FBioZone& Zone : BioZones)
+		{
+			Zones.Add(FVector4(Zone.Direction.X, Zone.Direction.Y, Zone.Direction.Z, Zone.Radius * 1.25f));
+			Colours.Add(Zone.Kind == 0 ? FLinearColor(Zone.Strength, 0.0f, 0.0f, 1.0f) : FLinearColor(0.0f, 0.9f, 0.0f, 1.0f));
+		}
+		Planet->SetBioZones(Zones, Colours);
+	}
+}
+
+FString UEarthfallSandboxSubsystem::UsePlague(const FVector& LocalDirection)
+{
+	if (!bFactionsBuilt) BuildFactions();
+	AddBioZone(LocalDirection, 0.06f, 0.25f, 0, 0);
+	if (UEarthfallPopulationSubsystem* People = Population())
+	{
+		People->PostDispatch(TEXT("[PLAGUE] UNKNOWN PATHOGEN FALLING WITH THE RAIN  //  HOSPITALS REPORT FIRST CASES"), 6);
+	}
+	return TEXT("PLAGUE RAIN  //  BIO-CLOUD RELEASED");
+}
+
+FString UEarthfallSandboxSubsystem::UseRage(const FVector& LocalDirection)
+{
+	UEarthfallPopulationSubsystem* People = Population();
+	if (!People || People->GetCountryAtDirection(LocalDirection) == 0) return TEXT("RAGE OUTBREAK  //  NEEDS PEOPLE, NOT OPEN SEA");
+	AddBioZone(LocalDirection, 0.05f, 0.9f, 1, 0);
+	People->PostDispatch(TEXT("[RAGE] MASS VIOLENCE ERUPTS  //  POLICE LINES OVERRUN  //  CITIES BURNING"), 6);
+	return TEXT("RAGE OUTBREAK  //  THE REGION TURNS ON ITSELF");
+}
+
+FString UEarthfallSandboxSubsystem::UseInsurgency(const FVector& LocalDirection)
+{
+	UEarthfallPopulationSubsystem* People = Population();
+	FEarthfallCountryStats Stats;
+	if (!People || !People->GetCountryStats(People->GetCountryAtDirection(LocalDirection), Stats)) return TEXT("REBEL INSURGENCY  //  CLICK A NATION");
+	FactionFor(Stats.Id, LocalDirection);
+	AddBioZone(LocalDirection, 0.07f, 0.9f, 2, 0);
+	People->PostDispatch(FString::Printf(TEXT("[UPRISING] REBEL INSURGENCY ERUPTS IN %s  //  GARRISONS UNDER ATTACK"), *Stats.Name.ToUpper()), 6);
+	return FString::Printf(TEXT("REBEL INSURGENCY  //  %s IN REVOLT"), *Stats.Name.ToUpper());
+}
+
+FString UEarthfallSandboxSubsystem::UseCure(const FVector& LocalDirection)
+{
+	UEarthfallPopulationSubsystem* People = Population();
+	if (!People) return TEXT("NO PLANETARY CONTACT");
+	constexpr float CureRadius = 0.22f;
+	const float CosLimit = FMath::Cos(CureRadius);
+	double Cured = 0.0;
+	int32 Cleared = 0;
+	for (int32 Index = BioZones.Num() - 1; Index >= 0; --Index)
+	{
+		if (FVector::DotProduct(BioZones[Index].Direction, LocalDirection) < CosLimit) continue;
+		Cured += BioZones[Index].Infected;
+		BioZones.RemoveAtSwap(Index);
+		++Cleared;
+	}
+	CuredTotal += Cured;
+	InfectedNow = FMath::Max(0.0, InfectedNow - Cured);
+	People->RepairRegion(LocalDirection, CureRadius);
+	bBioMaskDirty = true;
+	People->PostDispatch(FString::Printf(TEXT("[BLESSING] HEALING RAIN  //  %.1f MILLION CURED  //  POWER RESTORED  //  CITY LIGHTS RETURN"), Cured / 1.0e6), 6);
+	return FString::Printf(TEXT("CURE RAIN  //  %d OUTBREAKS CLEARED  //  %.1f M CURED"), Cleared, Cured / 1.0e6);
+}
+
+// ---------------------------------------------------------------------------
+// Living traffic
+// ---------------------------------------------------------------------------
+void UEarthfallSandboxSubsystem::BuildRoutes()
+{
+	UEarthfallPopulationSubsystem* People = Population();
+	if (!People) return;
+	// Hub airports, and sea lanes as pairs of open-water waypoints.
+	static const double Hubs[][2] = {
+		{40.7, -74.0}, {34.0, -118.2}, {41.9, -87.6}, {19.4, -99.1}, {-23.5, -46.6}, {51.5, -0.1}, {48.85, 2.35}, {50.1, 8.7},
+		{55.75, 37.6}, {25.2, 55.3}, {28.6, 77.2}, {1.35, 103.8}, {39.9, 116.4}, {31.2, 121.5}, {35.7, 139.7}, {-33.9, 151.2},
+		{-26.2, 28.0}, {30.0, 31.2}, {6.5, 3.4}, {37.57, 126.98}};
+	static const double Lanes[][4] = {
+		{40.0, -68.0, 49.0, -9.0}, {34.0, -122.0, 34.0, 142.0}, {-33.0, 18.0, -34.0, -52.0}, {12.0, 52.0, 6.0, 80.0},
+		{2.0, 105.0, 22.0, 119.0}, {36.0, -8.0, 14.0, -60.0}, {-35.0, 116.0, 5.0, 82.0}, {25.0, -88.0, 37.0, -72.0},
+		{-10.0, -35.0, 5.0, -12.0}, {55.0, -160.0, 38.0, 145.0}, {-38.0, 150.0, -40.0, -75.0}, {58.0, 2.0, 62.0, -22.0}};
+	const int32 HubCount = UE_ARRAY_COUNT(Hubs);
+	FRandomStream Random(4242);
+	for (int32 Index = 0; Index < 64; ++Index)
+	{
+		const int32 A = Random.RandRange(0, HubCount - 1);
+		const int32 B = (A + Random.RandRange(1, HubCount - 1)) % HubCount;
+		FRoute& Route = Routes.AddDefaulted_GetRef();
+		Route.From = EarthfallSolar::DirectionFromLatLon(Hubs[A][0], Hubs[A][1]);
+		Route.To = EarthfallSolar::DirectionFromLatLon(Hubs[B][0], Hubs[B][1]);
+		Route.FromCountry = People->GetCountryAtDirection(Route.From);
+		Route.ToCountry = People->GetCountryAtDirection(Route.To);
+		Route.Phase = Random.FRand();
+		Route.Speed = Random.FRandRange(0.020f, 0.032f);
+	}
+	for (const double* Lane : Lanes)
+	{
+		for (int32 Ship = 0; Ship < 4; ++Ship)
+		{
+			FRoute& Route = Routes.AddDefaulted_GetRef();
+			Route.From = EarthfallSolar::DirectionFromLatLon(Lane[0], Lane[1]);
+			Route.To = EarthfallSolar::DirectionFromLatLon(Lane[2], Lane[3]);
+			Route.Phase = Random.FRand();
+			Route.Speed = Random.FRandRange(0.006f, 0.009f);
+			Route.bSea = true;
+		}
+	}
+}
+
+void UEarthfallSandboxSubsystem::TickTraffic(float DeltaTime)
+{
+	if (Routes.IsEmpty()) BuildRoutes();
+	RouteTimer += DeltaTime;
+	if (RouteTimer < 1.0f) return;
+	RouteTimer = 0.0f;
+	UEarthfallPopulationSubsystem* People = Population();
+	const AEarthfallPlanet* Planet = FindPlanet();
+	if (!People) return;
+	// A nation at war, blacked out or fallen grounds its flights; a tsunami clears the sea lanes.
+	auto Grounded = [this, People](int32 CountryId)
+	{
+		FEarthfallCountryStats Stats;
+		if (CountryId <= 0 || !People->GetCountryStats(CountryId, Stats)) return false;
+		if (Stats.GridPercent < 55.0f || Stats.Stability >= EEarthfallStability::MartialLaw) return true;
+		const int32* Faction = FactionByCountry.Find(CountryId);
+		return Faction && !Factions[*Faction].AtWar.IsEmpty();
+	};
+	const bool bSeaClosed = Planet && Planet->IsTsunamiActive();
+	for (FRoute& Route : Routes)
+	{
+		Route.bOpen = Route.bSea ? !bSeaClosed : !(Grounded(Route.FromCountry) || Grounded(Route.ToCountry));
+	}
 }

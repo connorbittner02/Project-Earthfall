@@ -137,6 +137,15 @@ public:
 	void PostDispatch(const FString& Text, int32 Priority) { EnqueueNews(Text, Priority); }
 	/** Kill this fraction of everyone alive, everywhere (famine, exposure). Returns the dead. */
 	double ApplyGlobalAttrition(double Fraction);
+	/** People alive within an angular radius of a direction. */
+	double PopulationInRadius(const FVector& LocalDirection, float RadiusRadians) const;
+	/**
+	 * Disease or unrest in a region: kill and displace fractions of the people
+	 * there and wear the grid down. Returns the dead.
+	 */
+	double ApplyRegionalAttrition(const FVector& LocalDirection, float RadiusRadians, double KillFraction, double DisplaceFraction, float GridDamage);
+	/** Bring power back, settle the displaced and clear drifting fallout in a region. */
+	void RepairRegion(const FVector& LocalDirection, float RadiusRadians);
 	static const TCHAR* StabilityLabel(EEarthfallStability Stability);
 
 	/** Simulation clock shared with the ash advection shader so both use the same wind. */
@@ -235,4 +244,6 @@ private:
 	void RecoverEnvironment(float DeltaTime);
 	void RefreshPopulationTotals();
 	static float DispatchLifetimeForPriority(int32 Priority);
+	/** Call Visit(cell) for every population cell within RadiusRadians of a direction. */
+	void ForEachCellInRadius(const FVector& LocalDirection, float RadiusRadians, TFunctionRef<void(FEarthfallPopulationCell&)> Visit);
 };

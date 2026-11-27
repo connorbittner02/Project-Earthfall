@@ -57,6 +57,12 @@ public:
 	void SetWinterOverride(float Level) { WinterOverride = Level; }
 	/** Lift the sea surface at an open-water point, as an impact or sea-floor rupture does. Strength 0..1. */
 	void TriggerTsunami(const FVector& LocalDirection, float Strength);
+	bool IsTsunamiActive() const { return TsunamiActiveSeconds > 0.0f; }
+	/**
+	 * Redraw the bio mask from the sandbox's zones. XYZ = planet-local direction,
+	 * W = angular radius; colour R = infection, G = rage or insurgency.
+	 */
+	void SetBioZones(const TArray<FVector4>& Zones, const TArray<FLinearColor>& Colours);
 	/** (planet-local direction, height in radii) of the tallest standing ash or steam column; height 0 if none. */
 	FLinearColor GetColumnShadowParams() const;
 
@@ -117,6 +123,9 @@ private:
 	/** Crater height field for parallax occlusion: R bowl depth, G rim and rays. */
 	UPROPERTY(Transient)
 	TObjectPtr<UTextureRenderTarget2D> CraterRT;
+	/** 512x256 RGBA8: R = infection, G = rage and insurgency. Redrawn from the sandbox's zones. */
+	UPROPERTY(Transient)
+	TObjectPtr<UTextureRenderTarget2D> PlagueRT;
 	UPROPERTY(Transient)
 	TObjectPtr<UTexture2D> CraterStampTexture;
 	UPROPERTY(Transient)
