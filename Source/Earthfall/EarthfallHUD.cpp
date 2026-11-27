@@ -130,6 +130,9 @@ bool AEarthfallHUD::HandleClick(const FVector2D& ScreenPosition, AEarthOrbitPawn
 		case EButton::SelectTab:
 			Pawn->SelectTab(Entry.Value);
 			break;
+		case EButton::SelectMunition:
+			Pawn->SelectMunition(Entry.Value);
+			break;
 		case EButton::SelectTool:
 			Pawn->SelectTool(Entry.Value / 8, Entry.Value % 8);
 			break;
@@ -199,7 +202,7 @@ void AEarthfallHUD::DrawHUD()
 	DrawArsenalPanel(Pawn, W);
 	DrawReticle(Pawn, W, H);
 
-	Text(TEXT("RMB DRAG  ORBIT     WHEEL  ZOOM     LMB  USE     TAB  TOOLS     1-6  SELECT     Q/E  YIELD     A/D  SIZE     Z/C  FALLOUT     M  INSPECT     H  HUD     R  RESET"),
+	Text(TEXT("RMB DRAG  ORBIT     WHEEL  ZOOM     LMB  USE     TAB  TOOLS     1-6  SELECT     Q/E  YIELD     A/D  SIZE     Z/C  FALLOUT     F  SHELL     M  INSPECT     H  HUD     R  RESET"),
 		W * 0.5f, H - Px(TickerHeight + 28.0f), 11.5f, Dim, EFace::Regular, EAlign::Center);
 	DrawDispatchTicker(Ticker, W, H);
 
@@ -322,6 +325,33 @@ void AEarthfallHUD::DrawArsenalPanel(const AEarthOrbitPawn* Pawn, float ScreenWi
 	Text(EarthfallTools::Get(ActiveTab, HintSlot).Hint, X + Px(14.0f), HintY + Px(19.0f), 9.5f, Dim);
 
 	DrawMultiplierPanel(Pawn, ScreenWidth, Y + Height + Px(12.0f));
+	// The multiplier panel is 208 reference pixels tall.
+	DrawMunitionStrip(Pawn, ScreenWidth, Y + Height + Px(12.0f) + Px(208.0f) + Px(12.0f));
+}
+
+void AEarthfallHUD::DrawMunitionStrip(const AEarthOrbitPawn* Pawn, float ScreenWidth, float Top)
+{
+	// Five shells in a row: click one, or press F to cycle.
+	const float Width = Px(380.0f);
+	const float X = ScreenWidth - Px(Margin) - Width;
+	Panel(X, Top, Width, Px(86.0f), TEXT("SHELL  [F]"));
+	const int32 Loaded = Pawn->GetMunition();
+	const bool bUsable = Pawn->GetToolTab() == EarthfallTools::TabOrbital && EarthfallMunitions::WeaponTakesMunitions(Pawn->GetWeaponIndex());
+	Text(bUsable ? EarthfallMunitions::Name(Loaded) : TEXT("NOT FOR THIS WEAPON"), X + Width - Px(14.0f), Top + Px(10.0f), 11.0f,
+		bUsable ? EarthfallMunitions::Color(Loaded) : Dim, EFace::Mono, EAlign::Right);
+	const float Gap = Px(6.0f);
+	const float ButtonWidth = (Width - Px(20.0f) - Gap * (EarthfallMunitions::Count - 1)) / EarthfallMunitions::Count;
+	for (int32 Index = 0; Index < EarthfallMunitions::Count; ++Index)
+	{
+		const float ButtonX = X + Px(10.0f) + (ButtonWidth + Gap) * Index;
+		const float ButtonY = Top + Px(40.0f);
+		const FLinearColor Colour = EarthfallMunitions::Color(Index);
+		const bool bSelected = Index == Loaded;
+		const bool bHovered = Button(ButtonX, ButtonY, ButtonWidth, Px(34.0f), EButton::SelectMunition, Index);
+		Fill(ButtonX, ButtonY, ButtonWidth, Px(34.0f), FLinearColor(Colour.R, Colour.G, Colour.B, bSelected ? 0.30f : (bHovered ? 0.14f : 0.06f)));
+		if (bSelected) Fill(ButtonX, ButtonY + Px(31.0f), ButtonWidth, Px(3.0f), Colour);
+		Text(EarthfallMunitions::ShortName(Index), ButtonX + ButtonWidth * 0.5f, ButtonY + Px(9.0f), 11.5f, bSelected ? White : Dim, EFace::Bold, EAlign::Center);
+	}
 }
 
 void AEarthfallHUD::DrawMultiplierPanel(const AEarthOrbitPawn* Pawn, float ScreenWidth, float Top)
@@ -519,7 +549,11 @@ void AEarthfallHUD::DrawCountryDossier(const AEarthOrbitPawn* Pawn)
 	const UEarthfallSandboxSubsystem* Sandbox = World->GetSubsystem<UEarthfallSandboxSubsystem>();
 	const bool bFaction = Sandbox && Sandbox->GetFactionInfo(Stats.Id, Faction);
 	const double CountryInfected = Sandbox ? Sandbox->GetCountryInfected(Stats.Id) : 0.0;
-	Panel(X, Y, Width, Px(72.0f) + RowHeight * ((bFaction ? 11 : 7) + (CountryInfected >= 1.0 ? 1 : 0)) + Px(10.0f), TEXT("COUNTRY DOSSIER"));
+	FString CityName;
+	int32 CityTier = 0;
+	float CityGrowth = 1.0f;
+	const bool bCity = Population->GetLargestCity(Stats.Id, CityName, CityTier, CityGrowth);
+	Panel(X, Y, Width, Px(72.0f) + RowHeight * ((bFaction ? 12 : 7) + (CountryInfected >= 1.0 ? 1 : 0) + (bCity ? 1 : 0)) + Px(10.0f), TEXT("COUNTRY DOSSIER"));
 	Text(Stats.Name.ToUpper(), X + Px(14.0f), Y + Px(34.0f), 19.0f, White, EFace::Bold);
 	float RowY = Y + Px(70.0f);
 	const float LabelX = X + Px(14.0f);
@@ -546,6 +580,12 @@ void AEarthfallHUD::DrawCountryDossier(const AEarthOrbitPawn* Pawn)
 	static const FLinearColor StabilityColors[] = {Green, Orange, Red, FLinearColor(0.75f, 0.20f, 0.95f, 1.0f)};
 	Row(TEXT("GOVERNMENT"), UEarthfallPopulationSubsystem::StabilityLabel(Stats.Stability),
 		StabilityColors[static_cast<int32>(Stats.Stability)]);
+	if (bCity)
+	{
+		// The nation's largest hub, its tier, and how it has grown or shrunk.
+		Row(*CityName.ToUpper(), FString::Printf(TEXT("%s  %+.0f%%"), UEarthfallPopulationSubsystem::CityTierLabel(CityTier), (CityGrowth - 1.0f) * 100.0f),
+			CityGrowth >= 1.02f ? Green : (CityGrowth <= 0.98f ? Orange : White));
+	}
 	if (CountryInfected >= 1.0)
 	{
 		Row(TEXT("INFECTED"), FString::Printf(TEXT("%s  //  CURED %s"), *FormatPeople(CountryInfected), *FormatPeople(Sandbox->GetCured())), FLinearColor(0.62f, 1.0f, 0.22f, 1.0f));
@@ -553,6 +593,7 @@ void AEarthfallHUD::DrawCountryDossier(const AEarthOrbitPawn* Pawn)
 	if (bFaction)
 	{
 		// The nation as a power: what it can throw, and at whom.
+		Row(TEXT("TECH TIER"), UEarthfallSandboxSubsystem::TechTierLabel(Faction.TechTier), Cyan);
 		Row(TEXT("MILITARY"), FString::Printf(TEXT("%.0f / 100"), Faction.MilitaryStrength), White, Faction.MilitaryStrength / 100.0f);
 		Row(TEXT("WARHEADS"), FString::Printf(TEXT("%d"), Faction.NuclearStockpile), Faction.NuclearStockpile > 0 ? Orange : Dim);
 		Row(TEXT("AT WAR WITH"), Faction.AtWarWith.IsEmpty() ? FString(TEXT("NOBODY")) : FString::Join(Faction.AtWarWith, TEXT(" ")),

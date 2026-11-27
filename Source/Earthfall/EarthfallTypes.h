@@ -226,6 +226,39 @@ namespace EarthfallPhysics
 	}
 }
 
+/** The warhead a munition carries. Chosen by the player with F, and by factions according to their tech tier. */
+namespace EarthfallMunitions
+{
+	constexpr int32 Standard = 0;    // balanced crater, shock and blast
+	constexpr int32 Cluster = 1;     // MIRV: splits in flight into six sub-munitions
+	constexpr int32 Incendiary = 2;  // little crater, a huge flash and a wide firestorm
+	constexpr int32 Emp = 3;         // no crater: blacks out grids and blinds interceptors
+	constexpr int32 Penetrator = 4;  // narrow and deep: slips past defenses, wrecks the military
+	constexpr int32 Count = 5;
+
+	inline const TCHAR* Name(int32 Index)
+	{
+		static const TCHAR* Names[Count] = {TEXT("STANDARD HE"), TEXT("MIRV CLUSTER"), TEXT("INCENDIARY"), TEXT("EMP GRID-BUSTER"), TEXT("BUNKER-BUSTER")};
+		return Names[FMath::Clamp(Index, 0, Count - 1)];
+	}
+
+	inline const TCHAR* ShortName(int32 Index)
+	{
+		static const TCHAR* Names[Count] = {TEXT("HE"), TEXT("MIRV"), TEXT("FIRE"), TEXT("EMP"), TEXT("BUNKER")};
+		return Names[FMath::Clamp(Index, 0, Count - 1)];
+	}
+
+	inline FLinearColor Color(int32 Index)
+	{
+		static const FLinearColor Colors[Count] = {FLinearColor(0.90f, 0.94f, 1.0f), FLinearColor(1.0f, 0.82f, 0.35f),
+			FLinearColor(1.0f, 0.40f, 0.10f), FLinearColor(0.40f, 0.75f, 1.0f), FLinearColor(0.75f, 0.60f, 1.0f)};
+		return Colors[FMath::Clamp(Index, 0, Count - 1)];
+	}
+
+	/** Beams and singularities have no shell to swap. */
+	inline bool WeaponTakesMunitions(int32 WeaponIndex) { return WeaponIndex != 1 && WeaponIndex != 3; }
+}
+
 /** Everything the planet needs to resolve one detonation. */
 struct FEarthfallStrike
 {
@@ -241,6 +274,8 @@ struct FEarthfallStrike
 	FEarthfallImpactor Impactor;
 	/** Country ID of the nation that launched it; 0 = the player, -1 = nobody (nature). */
 	int32 AttackerCountry = 0;
+	/** One of EarthfallMunitions. */
+	int32 Munition = 0;
 
 	/** Blast radius grows with the fourth root of yield so 100x is ~3x wider, not 100x. */
 	static FEarthfallStrike Make(const FVector& InWorldLocation, int32 InWeaponIndex,

@@ -282,6 +282,10 @@ def build_surface(day, night, normal, masks, countries, black):
         ("Wave", texture_sample(material, "TsunamiRT", black, color, 950, pom), "RGB"),
         ("Fire", texture_sample(material, "FireMaskRT", black, color, 980, pom), "RGB"),
         ("Plague", texture_sample(material, "PlagueRT", black, color, 990, pom), "RGB"),
+        # A colour sampler, because the default (engine Black) is a colour texture. The
+        # runtime map bound over it is single-channel linear data and reads the same in R.
+        ("Growth", texture_sample(material, "CityGrowthTexture", black, color, 994, pom), "R"),
+        ("NightObj", texture_object(material, "NightTextureObject", night, 997), ""),
         ("CountryId", texture_sample(material, "CountryIDTexture", countries, unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_GRAYSCALE, 1000, pom), "R"),
         ("Inspect", vector_parameter(material, "Inspect", (0.0, 0.0, 0.0, 0.0), 1050), "RGBA"),
         ("Pom", pom_parameters, "RGBA"),

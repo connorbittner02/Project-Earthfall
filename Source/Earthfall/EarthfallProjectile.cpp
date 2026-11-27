@@ -132,6 +132,8 @@ void AEarthfallProjectile::Launch(AEarthfallPlanet* InPlanet, AEarthOrbitPawn* I
 		Control = PlanetCenter + Over * (PlanetRadius / FMath::Max(FMath::Cos(HalfAngle), 0.25f) * (1.0f + 0.12f * Loft) + 4.0f * Loft);
 	}
 	if (UEarthfallSandboxSubsystem* Sandbox = GetWorld() ? GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>() : nullptr) Sandbox->NotifyLaunch();
+	// A bunker-buster comes in too steep and too fast to intercept.
+	if (Strike.Munition == EarthfallMunitions::Penetrator) bDefenseChecked = true;
 
 	if (Style != EEarthfallProjectile::Beam)
 	{
@@ -245,6 +247,12 @@ void AEarthfallProjectile::Tick(float DeltaSeconds)
 				GlowMID->SetVectorParameterValue(TEXT("Tint"),
 					FLinearColor(Tone.R, Tone.G, Tone.B, Look.GlowIntensity * (1.0f + 2.5f * Reentry)));
 			}
+		}
+		// A MIRV bus releases its sub-munitions a little past half way.
+		if (Strike.Munition == EarthfallMunitions::Cluster && Alpha >= 0.55f)
+		{
+			SplitIntoSubmunitions();
+			return;
 		}
 		if (Alpha >= 1.0f) Detonate();
 	}
@@ -362,4 +370,42 @@ void AEarthfallProjectile::Intercept()
 	AgeAtImpact = Age;
 	Hull->SetVisibility(false);
 	HeadGlow->SetVisibility(false);
+}
+
+void AEarthfallProjectile::SplitIntoSubmunitions()
+{
+	const FVector Bus = GetFlightPosition();
+	const float Remaining = FMath::Max(GetRemainingSeconds(), 0.25f);
+	const FVector Aim = (Strike.WorldLocation - PlanetCenter).GetSafeNormal();
+	FVector TangentA;
+	FVector TangentB;
+	Aim.FindBestAxisVectors(TangentA, TangentB);
+	// One down the middle and five on a ring: together they blanket about
+	// twice the single warhead's footprint, each a third of its yield.
+	constexpr int32 SubCount = 6;
+	const float Spread = FMath::Max(Strike.Radius * 0.95f, 5.0f);
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	for (int32 Index = 0; Index < SubCount; ++Index)
+	{
+		FEarthfallStrike Child = Strike;
+		Child.Munition = EarthfallMunitions::Standard;
+		Child.Radius = Strike.Radius * 0.45f;
+		Child.Energy = Strike.Energy * 0.30f;
+		Child.YieldMultiplier = Strike.YieldMultiplier * 0.30f;
+		Child.Impactor = FEarthfallImpactor();
+		FVector Offset = FVector::ZeroVector;
+		if (Index > 0)
+		{
+			const float Angle = 2.0f * PI * (Index - 1) / (SubCount - 1) + FMath::FRandRange(-0.25f, 0.25f);
+			Offset = (TangentA * FMath::Cos(Angle) + TangentB * FMath::Sin(Angle)) * Spread * FMath::FRandRange(0.8f, 1.1f);
+		}
+		Child.WorldLocation = PlanetCenter + (Aim * PlanetRadius + Offset).GetSafeNormal() * PlanetRadius;
+		if (AEarthfallProjectile* Sub = GetWorld()->SpawnActor<AEarthfallProjectile>(AEarthfallProjectile::StaticClass(), Bus, FRotator::ZeroRotator, Params))
+		{
+			Sub->Launch(Planet.Get(), OwnerPawn.Get(), Bus, Child, Remaining * FMath::FRandRange(0.95f, 1.25f), false);
+		}
+	}
+	// The bus itself is spent: its trail fades and it resolves no strike.
+	Intercept();
 }

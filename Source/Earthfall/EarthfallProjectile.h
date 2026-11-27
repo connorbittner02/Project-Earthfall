@@ -47,6 +47,11 @@ public:
 	bool bDefenseChecked = false;
 
 private:
+	void SplitIntoSubmunitions();
+
+public:
+
+private:
 	static constexpr int32 TrailPoints = 48;
 
 	UPROPERTY(VisibleAnywhere)

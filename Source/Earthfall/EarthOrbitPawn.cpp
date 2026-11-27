@@ -209,6 +209,7 @@ void AEarthOrbitPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 	PlayerInputComponent->BindKey(EKeys::H, IE_Pressed, this, &AEarthOrbitPawn::CycleHudMode);
 	PlayerInputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &AEarthOrbitPawn::CycleTab);
 	PlayerInputComponent->BindKey(EKeys::M, IE_Pressed, this, &AEarthOrbitPawn::ToggleInspectMode);
+	PlayerInputComponent->BindKey(EKeys::F, IE_Pressed, this, &AEarthOrbitPawn::CycleMunition);
 	PlayerInputComponent->BindKey(EKeys::MiddleMouseButton, IE_Pressed, this, &AEarthOrbitPawn::ToggleInspectMode);
 }
 
@@ -390,11 +391,20 @@ bool AEarthOrbitPawn::FireAtDirection(const FVector& PlanetLocalDirection)
 void AEarthOrbitPawn::LaunchStrike(AEarthfallPlanet* Planet, const FVector& ImpactPoint)
 {
 	if (!Planet || !GetWorld() || !Camera) return;
-	const FEarthfallStrike Strike = FEarthfallStrike::Make(ImpactPoint, WeaponIndex,
+	FEarthfallStrike Strike = FEarthfallStrike::Make(ImpactPoint, WeaponIndex,
 		GetMultiplier(EEarthfallMultiplier::Yield), GetMultiplier(EEarthfallMultiplier::BlastRadius),
 		GetMultiplier(EEarthfallMultiplier::Fallout));
 
+	Strike.Munition = EarthfallMunitions::WeaponTakesMunitions(WeaponIndex) ? MunitionIndex : EarthfallMunitions::Standard;
+	// A penetrator puts everything into a narrow shaft.
+	if (Strike.Munition == EarthfallMunitions::Penetrator) Strike.Radius *= 0.4f;
 	SpawnProjectile(Planet, Strike);
+}
+
+void AEarthOrbitPawn::SelectMunition(int32 Index)
+{
+	MunitionIndex = FMath::Clamp(Index, 0, EarthfallMunitions::Count - 1);
+	SetStatus(FString::Printf(TEXT("SHELL LOADED  //  %s"), EarthfallMunitions::Name(MunitionIndex)), 1.2f);
 }
 
 void AEarthOrbitPawn::SpawnProjectile(AEarthfallPlanet* Planet, const FEarthfallStrike& Strike)
@@ -500,6 +510,7 @@ void AEarthOrbitPawn::ResetSimulation()
 	if (AEarthfallPlanet* Planet = FindPlanet()) Planet->ResetPlanet();
 	if (UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>()) Sandbox->ResetSandbox();
 	ImpactCount = 0;
+	MunitionIndex = 0;
 	LaunchCount = 0;
 	CooldownRemaining = 0.0f;
 	ShakeTimeRemaining = 0.0f;

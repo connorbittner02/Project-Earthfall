@@ -6,6 +6,7 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
             float3 DayTex, float3 NightTex, float3 NormalTex, float3 MasksTex,
             float3 Mask, float2 PomUV, Texture2D AshTex, SamplerState AshTexSampler,
             Texture2D CraterTex, SamplerState CraterTexSampler, float3 Wave, float3 Fire, float3 Plague,
+            float Growth, Texture2D NightObj, SamplerState NightObjSampler,
             float CountryId, float4 Inspect, float4 Pom, float3 Sun, float Time, float4 CloudLayer, float4 Tuning, float4 Climate,
             float4 A0, float4 B0, float4 C0, float4 A1, float4 B1, float4 C1,
             float4 A2, float4 B2, float4 C2, float4 A3, float4 B3, float4 C3)
@@ -220,7 +221,27 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
     float infection = saturate(Plague.r);
     float3 cityColour = lerp(float3(1.0, 0.78, 0.45), float3(0.62, 1.00, 0.22), saturate(infection * 2.2));
     cityDetail *= 1.0 - 0.88 * saturate(infection * 2.0 - 0.9);
-    float3 emissive = NightTex * cityDetail * cityColour * 1.30 * night * (1.0 - blackout) * Tuning.y * (1.0 - 0.7 * soot);
+    // Cities follow their people. Growth is settled population over baseline
+    // (1 = unchanged, up to 3): a shrinking city dims, a thriving one brightens
+    // and its lights spread outward over the surrounding land.
+    float growth = Growth < 0.002 ? 1.0 : saturate((Growth * 255.0 - 1.0) / 254.0) * 3.0;
+    float sprawl = saturate((growth - 1.0) / 1.2);
+    float3 cityTex = NightTex;
+    [branch] if (sprawl > 0.01)
+    {
+        // Two rings of four taps on the night map, reaching up to seven texels (about 35 km).
+        float2 reach = float2(1.0 / 8192.0, 1.0 / 4096.0) * (1.5 + 5.5 * sprawl);
+        float3 wide = float3(0.0, 0.0, 0.0);
+        for (int tapIndex = 0; tapIndex < 8; tapIndex++)
+        {
+            float tapAngle = tapIndex * 0.7853982 + 0.3;
+            float2 offset = float2(cos(tapAngle), sin(tapAngle)) * reach * (tapIndex % 2 == 0 ? 1.0 : 0.55);
+            wide = max(wide, Texture2DSampleLevel(NightObj, NightObjSampler, PomUV + offset, 0).rgb);
+        }
+        cityTex = max(NightTex, wide * (0.50 + 0.45 * sprawl));
+    }
+    float cityLevel = growth < 1.0 ? pow(growth, 0.8) : 1.0 + 1.1 * (growth - 1.0);
+    float3 emissive = cityTex * cityLevel * cityDetail * cityColour * 1.30 * night * (1.0 - blackout) * Tuning.y * (1.0 - 0.7 * soot);
 
     // --- Magma: ridged-noise veins that narrow and dim as the crater cools.
     // Warp the lookup so the veins meander instead of following the noise lattice.

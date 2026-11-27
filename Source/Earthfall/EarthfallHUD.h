@@ -28,7 +28,7 @@ public:
 private:
 	enum class EFace : uint8 { Regular, Bold, Mono };
 	enum class EAlign : uint8 { Left, Center, Right };
-	enum class EButton : uint8 { SelectWeapon, MultiplierDown, MultiplierUp, CycleHud, ToggleInspect, SelectTab, SelectTool };
+	enum class EButton : uint8 { SelectWeapon, MultiplierDown, MultiplierUp, CycleHud, ToggleInspect, SelectTab, SelectTool, SelectMunition };
 
 	struct FButton
 	{
@@ -56,6 +56,7 @@ private:
 	void DrawStatusPanel(const FEarthfallTelemetry& Telemetry, const AEarthOrbitPawn* Pawn);
 	void DrawArsenalPanel(const AEarthOrbitPawn* Pawn, float ScreenWidth);
 	void DrawMultiplierPanel(const AEarthOrbitPawn* Pawn, float ScreenWidth, float Top);
+	void DrawMunitionStrip(const AEarthOrbitPawn* Pawn, float ScreenWidth, float Top);
 	void DrawReticle(const AEarthOrbitPawn* Pawn, float ScreenWidth, float ScreenHeight);
 	void DrawDispatchTicker(const FString& String, float ScreenWidth, float ScreenHeight);
 	void DrawEyeButton(const AEarthOrbitPawn* Pawn);

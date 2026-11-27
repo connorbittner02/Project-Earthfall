@@ -137,6 +137,12 @@ void UEarthfallPopulationSubsystem::AdvancePlumes(float DeltaTime)
 	Telemetry.SunlightPercent = 100.0f * FMath::Exp(-TotalSoot / 600.0f);
 
 	FalloutDoseTimer += DeltaTime;
+	GrowthTimer += DeltaTime;
+	if (GrowthTimer >= 1.0f)
+	{
+		GrowCities(GrowthTimer);
+		GrowthTimer = 0.0f;
+	}
 	if (FalloutDoseTimer >= FalloutDoseInterval)
 	{
 		ApplyFalloutDose(FalloutDoseTimer);
@@ -448,6 +454,7 @@ void UEarthfallPopulationSubsystem::SeedPopulation()
 		{
 			Cell.LivingPopulation = TotalWeight > 0.0 ? InitialPopulation * Weights[Index] / TotalWeight : InitialPopulation / Cells.Num();
 		}
+		Cell.BaselinePopulation = Cell.LivingPopulation;
 		Cell.DisplacedPopulation = 0.0;
 		Cell.PowerGridHealth = 1.0f;
 		Cell.HazardHeat = 0.0f;
@@ -663,6 +670,7 @@ void UEarthfallPopulationSubsystem::EnqueueNews(const FString& Text, int32 Prior
 void UEarthfallPopulationSubsystem::ResetSimulation()
 {
 	SeedPopulation();
+	MeasureCities(true);
 	Telemetry = FEarthfallTelemetry();
 	Telemetry.LivingPopulation = InitialPopulation;
 	GridPowerSum = static_cast<float>(Cells.Num());
@@ -972,4 +980,111 @@ void UEarthfallPopulationSubsystem::SetBorderStress(const TMap<int32, float>& St
 		CountryStates[Id].BorderStress = Next;
 	}
 	if (bChanged) RefreshPopulationTotals();
+}
+
+// ---------------------------------------------------------------------------
+// Living cities
+// ---------------------------------------------------------------------------
+const TCHAR* UEarthfallPopulationSubsystem::CityTierLabel(int32 Tier)
+{
+	static const TCHAR* Labels[] = {TEXT("CITY"), TEXT("MEGACITY"), TEXT("ARCOLOGY")};
+	return Labels[FMath::Clamp(Tier, 0, 2)];
+}
+
+void UEarthfallPopulationSubsystem::BoostCountryGrowth(int32 CountryId, float Multiplier, float Seconds)
+{
+	if (!CountryStates.IsValidIndex(CountryId)) return;
+	CountryStates[CountryId].GrowthBoost = FMath::Max(CountryStates[CountryId].GrowthBoost, Multiplier);
+	CountryStates[CountryId].GrowthBoostSeconds = FMath::Max(CountryStates[CountryId].GrowthBoostSeconds, Seconds);
+}
+
+void UEarthfallPopulationSubsystem::GrowCities(float DeltaTime)
+{
+	if (Cells.IsEmpty() || CellCountry.Num() != Cells.Num()) return;
+	for (int32 Index = 0; Index < Cells.Num(); ++Index)
+	{
+		FEarthfallPopulationCell& Cell = Cells[Index];
+		if (Cell.LivingPopulation <= 0.0 || Cell.BaselinePopulation <= 0.0) continue;
+		const FCountryState& State = CountryStates[CellCountry[Index]];
+		// Crews repair the grid wherever there are still people to do it.
+		Cell.PowerGridHealth = FMath::Min(1.0f, Cell.PowerGridHealth + 0.006f * DeltaTime);
+		if (State.Stability >= EEarthfallStability::MartialLaw) continue;
+		// The displaced come home once things are calm.
+		Cell.DisplacedPopulation *= FMath::Max(0.0, 1.0 - 0.01 * DeltaTime);
+		// Growth needs peace, power and people who are not on the road.
+		if (Cell.PowerGridHealth < 0.7f || Cell.HazardHeat > 0.1f || Cell.DisplacedPopulation > Cell.LivingPopulation * 0.2) continue;
+		const double Cap = Cell.BaselinePopulation * MaxGrowth;
+		if (Cell.LivingPopulation >= Cap) continue;
+		const double Rate = GrowthPerSecond * State.GrowthBoost * (State.Stability == EEarthfallStability::Stable ? 1.0 : 0.4);
+		Cell.LivingPopulation = FMath::Min(Cap, Cell.LivingPopulation * (1.0 + Rate * DeltaTime));
+	}
+	for (FCountryState& State : CountryStates)
+	{
+		if (State.GrowthBoostSeconds <= 0.0f) continue;
+		State.GrowthBoostSeconds -= DeltaTime;
+		if (State.GrowthBoostSeconds <= 0.0f) State.GrowthBoost = 1.0f;
+	}
+	RefreshPopulationTotals();
+	MeasureCities(false);
+}
+
+void UEarthfallPopulationSubsystem::MeasureCities(bool bReset)
+{
+	// A hub's size is everyone within about 220 km of it. On a reset every hub
+	// is measured; otherwise a few per call, round-robin.
+	constexpr float HubRadius = 0.035f;
+	const int32 Count = bReset ? Cities.Num() : FMath::Min(8, Cities.Num());
+	for (int32 Step = 0; Step < Count; ++Step)
+	{
+		FCityAnchor& City = Cities[bReset ? Step : (CityCursor++ % Cities.Num())];
+		const double Region = PopulationInRadius(City.Direction, HubRadius);
+		if (bReset)
+		{
+			City.InitialRegion = Region;
+			City.Tier = 0;
+			City.CountryId = GetCountryAtDirection(City.Direction);
+			continue;
+		}
+		if (City.InitialRegion < 1.0e5) continue;
+		const double Ratio = Region / City.InitialRegion;
+		const int32 Tier = Ratio >= 2.2 ? 2 : (Ratio >= 1.5 ? 1 : 0);
+		if (Tier > City.Tier)
+		{
+			UE_LOG(LogTemp, Display, TEXT("EARTHFALL_CITY %s reaches %s tier at %.2fx baseline"), *City.Name, CityTierLabel(Tier), Ratio);
+			EnqueueNews(FString::Printf(TEXT("[URBAN BOOM - %s REACHES %s TIER] %s people  //  +%.0f%% on baseline"),
+				*City.Name.ToUpper(), CityTierLabel(Tier), *FormatPeople(Region), (Ratio - 1.0) * 100.0), 5);
+		}
+		else if (Tier < City.Tier)
+		{
+			EnqueueNews(FString::Printf(TEXT("[URBAN DECLINE - %s FALLS TO %s TIER]"), *City.Name.ToUpper(), CityTierLabel(Tier)), 4);
+		}
+		City.Tier = Tier;
+	}
+}
+
+void UEarthfallPopulationSubsystem::FillCityGrowth(TArray<uint8>& Out) const
+{
+	Out.SetNumUninitialized(Cells.Num());
+	for (int32 Index = 0; Index < Cells.Num(); ++Index)
+	{
+		const FEarthfallPopulationCell& Cell = Cells[Index];
+		// Empty cells (ocean, ice) carry baseline so they never dim a coast by bilinear bleed.
+		const double Ratio = Cell.BaselinePopulation > 0.0
+			? FMath::Max(0.0, Cell.LivingPopulation - Cell.DisplacedPopulation) / Cell.BaselinePopulation : 1.0;
+		Out[Index] = static_cast<uint8>(1 + FMath::RoundToInt32(254.0 * FMath::Clamp(Ratio / MaxGrowth, 0.0, 1.0)));
+	}
+}
+
+bool UEarthfallPopulationSubsystem::GetLargestCity(int32 CountryId, FString& OutName, int32& OutTier, float& OutGrowth) const
+{
+	const FCityAnchor* Best = nullptr;
+	for (const FCityAnchor& City : Cities)
+	{
+		if (City.CountryId == CountryId && City.InitialRegion >= 1.0e5 && (!Best || City.InitialRegion > Best->InitialRegion)) Best = &City;
+	}
+	if (!Best) return false;
+	OutName = Best->Name;
+	OutTier = Best->Tier;
+	OutGrowth = static_cast<float>(PopulationInRadius(Best->Direction, 0.035f) / Best->InitialRegion);
+	return true;
 }

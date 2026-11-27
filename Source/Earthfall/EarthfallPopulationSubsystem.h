@@ -69,6 +69,8 @@ struct FEarthfallCountryStats
 struct FEarthfallPopulationCell
 {
 	double LivingPopulation = 0.0;
+	/** People here before anything happened; growth and city-light sprawl are measured against it. */
+	double BaselinePopulation = 0.0;
 	double DisplacedPopulation = 0.0;
 	float PowerGridHealth = 1.0f;
 	float HazardHeat = 0.0f;
@@ -148,6 +150,22 @@ public:
 	void RepairRegion(const FVector& LocalDirection, float RadiusRadians);
 	/** Replace every nation's border strain (country ID -> 0..0.35); nations not listed are cleared. */
 	void SetBorderStress(const TMap<int32, float>& StressByCountry);
+
+	/** Cities grow at this fraction per second in a stable, powered nation, up to MaxGrowth times baseline. */
+	static constexpr float GrowthPerSecond = 0.003f;
+	static constexpr float MaxGrowth = 3.0f;
+	/** Multiply one nation's growth rate for a while (resource drops, uplift). */
+	void BoostCountryGrowth(int32 CountryId, float Multiplier, float Seconds);
+	/**
+	 * One byte per population cell for the surface shader: 1 + 254 * settled people / baseline / MaxGrowth.
+	 * Zero is never written, so an unbound texture reads as 'no data'.
+	 */
+	void FillCityGrowth(TArray<uint8>& Out) const;
+	static int32 GrowthGridWidth() { return GridWidth; }
+	static int32 GrowthGridHeight() { return GridHeight; }
+	/** The largest hub city in a nation: its name, tier (0 city, 1 megacity, 2 arcology) and size against baseline. */
+	bool GetLargestCity(int32 CountryId, FString& OutName, int32& OutTier, float& OutGrowth) const;
+	static const TCHAR* CityTierLabel(int32 Tier);
 	static const TCHAR* StabilityLabel(EEarthfallStability Stability);
 
 	/** Simulation clock shared with the ash advection shader so both use the same wind. */
@@ -159,6 +177,9 @@ private:
 		FString Name;
 		FVector Direction = FVector::ForwardVector;
 		float Weight = 1.0f;
+		double InitialRegion = 0.0;
+		int32 Tier = 0;
+		int32 CountryId = 0;
 	};
 
 	static constexpr int32 GridWidth = 512;
@@ -198,6 +219,8 @@ private:
 		EEarthfallStability Stability = EEarthfallStability::Stable;
 		/** Strain from refugees arriving over the border, added to this nation's own. */
 		float BorderStress = 0.0f;
+		float GrowthBoost = 1.0f;
+		float GrowthBoostSeconds = 0.0f;
 	};
 
 	/** 1024x512 country IDs loaded from Content/Earth/Data/CountryID.bin. */
@@ -247,6 +270,10 @@ private:
 	void ApplyFalloutDose(float DeltaTime);
 	void RecoverEnvironment(float DeltaTime);
 	void RefreshPopulationTotals();
+	void GrowCities(float DeltaTime);
+	void MeasureCities(bool bReset);
+	float GrowthTimer = 0.0f;
+	int32 CityCursor = 0;
 	static float DispatchLifetimeForPriority(int32 Priority);
 	/** Call Visit(cell) for every population cell within RadiusRadians of a direction. */
 	void ForEachCellInRadius(const FVector& LocalDirection, float RadiusRadians, TFunctionRef<void(FEarthfallPopulationCell&)> Visit);

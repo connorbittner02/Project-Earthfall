@@ -133,6 +133,12 @@ void AEarthfallPlanet::Tick(float DeltaSeconds)
 	}
 
 	UpdateWinter(DeltaSeconds);
+	CityGrowthTimer += DeltaSeconds;
+	if (CityGrowthTimer >= 1.0f)
+	{
+		CityGrowthTimer = 0.0f;
+		UpdateCityGrowthTexture();
+	}
 	EnvironmentAccumulator += DeltaSeconds;
 	if (EnvironmentAccumulator >= 0.5f)
 	{
@@ -500,11 +506,12 @@ void AEarthfallPlanet::RedrawImpactMask()
 	UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(GetWorld(), ImpactMaskRT, Canvas, CanvasSize, Context);
 	for (const FImpactStamp& Stamp : ImpactStamps)
 	{
-		if (Stamp.bNuclear)
+		if (Stamp.bNuclear || Stamp.bEmpOnly)
 		{
 			// Wide EMP plateau: city lights die far beyond the scorched core.
 			DrawStamp(Canvas, CanvasSize, EmpStampTexture, Stamp.Direction, Stamp.Radius * 3.5f, FLinearColor::White);
 		}
+		if (Stamp.bEmpOnly) continue;
 		const float Heat = FMath::Exp(-Stamp.Age / Stamp.HeatSeconds);
 		DrawStamp(Canvas, CanvasSize, ScorchStampTexture, Stamp.Direction, Stamp.Radius, FLinearColor(1.0f, Heat, 0.0f, 1.0f));
 
@@ -798,11 +805,29 @@ void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
 	float ShockMaxRadius = 0.0f;
 	float ShockSpeed = 0.0f;
 	StartShock(LocalDirection, BlastAngle, Strike, ShockMaxRadius, ShockSpeed);
+	const bool bEmp = Strike.Munition == EarthfallMunitions::Emp;
+	const bool bIncendiary = Strike.Munition == EarthfallMunitions::Incendiary;
+	const bool bPenetrator = Strike.Munition == EarthfallMunitions::Penetrator;
+	if (bIncendiary)
+	{
+		// Thermobaric: the flash is the weapon.
+		Shocks[LastShockSlot].FlashPeak *= 2.4f;
+		Shocks[LastShockSlot].FlashRadius *= 1.6f;
+		Shocks[LastShockSlot].FlashColor = FLinearColor(1.0f, 0.62f, 0.28f);
+	}
+	else if (bEmp)
+	{
+		Shocks[LastShockSlot].FlashPeak *= 1.5f;
+		Shocks[LastShockSlot].FlashRadius *= 2.5f;
+		Shocks[LastShockSlot].FlashColor = FLinearColor(0.45f, 0.70f, 1.0f);
+	}
 
 	if (ImpactStamps.Num() >= MaxImpactStamps) ImpactStamps.RemoveAt(0);
 	FImpactStamp& Stamp = ImpactStamps.AddDefaulted_GetRef();
 	Stamp.Direction = LocalDirection;
-	Stamp.Radius = BlastAngle;
+	// An incendiary chars a smaller core than it burns; an EMP chars nothing.
+	Stamp.Radius = bIncendiary ? BlastAngle * 0.6f : BlastAngle;
+	Stamp.bEmpOnly = bEmp;
 	Stamp.bNuclear = bNuclear;
 	Stamp.HeatSeconds = (bNuclear ? 14.0f : 8.0f) * (1.0f + 0.15f * YieldLog);
 	Stamp.ClearMaxRadius = FMath::Min(BlastAngle * (bNuclear ? 3.5f : 1.7f), 2.6f);
@@ -814,21 +839,31 @@ void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
 	// Visible plume: lofted mass scales sub-linearly so a 100x strike is a
 	// continental smear rather than a solid black disc.
 	const float PlumeScale = FMath::Pow(FMath::Max(Strike.YieldMultiplier, 0.01f), 0.4f) * FMath::Pow(Strike.FalloutMultiplier, 0.7f);
-	StampAsh(LocalDirection, BlastAngle * 1.4f + 0.03f,
+	if (!bEmp) StampAsh(LocalDirection, BlastAngle * 1.4f + 0.03f,
 		FMath::Min(Spec.Soot * 0.9f * PlumeScale, 3.0f), FMath::Min(Spec.Fallout * 0.9f * PlumeScale, 3.0f));
 
 	// Crater height field for parallax occlusion: depth scales with crater size.
-	const float Relief = FMath::Clamp(BlastAngle * 3.0f, 0.25f, 1.0f);
-	if (!bOceanStrike) StampInto(CraterRT, CraterStampTexture, LocalDirection, BlastAngle * 1.25f, FLinearColor(Relief, Relief, 0.0f, 1.0f));
+	// A bunker-buster digs deep for its width.
+	const float Relief = FMath::Clamp(BlastAngle * 3.0f * (bPenetrator ? 3.0f : 1.0f), 0.25f, 1.0f);
+	if (!bOceanStrike && !bEmp && !bIncendiary) StampInto(CraterRT, CraterStampTexture, LocalDirection, BlastAngle * 1.25f, FLinearColor(Relief, Relief, 0.0f, 1.0f));
 
 	if (Population)
 	{
-		Population->ApplyStrike(LocalDirection, BlastAngle, Strike.Energy, Strike.WeaponIndex, Strike.YieldMultiplier, Strike.FalloutMultiplier);
+		if (bEmp)
+		{
+			// Nobody dies in the pulse. Every grid under it goes down.
+			Population->ApplyRegionalAttrition(LocalDirection, BlastAngle * 3.5f, 0.0, 0.0, 0.95f);
+			Population->PostDispatch(TEXT("[EMP] GRID-BUSTER PULSE  //  REGIONAL POWER DOWN  //  INTERCEPTOR BATTERIES BLIND"), 6);
+		}
+		else
+		{
+			Population->ApplyStrike(LocalDirection, BlastAngle, Strike.Energy, Strike.WeaponIndex, Strike.YieldMultiplier, Strike.FalloutMultiplier);
+		}
 		const bool bOcean = Population->GetCountryAtDirection(LocalDirection) == 0;
 		const int32 Weapon = Strike.WeaponIndex;
 		// Wave height, speed and run-up all come from the water the impact
 		// displaces, which comes from its kinetic energy: 1/2 m v^2.
-		const float WaveStrength = (Impactor.bKinetic || bNuclear) ? Impactor.TsunamiStrength() : 0.0f;
+		const float WaveStrength = (!bEmp && (Impactor.bKinetic || bNuclear)) ? Impactor.TsunamiStrength() : 0.0f;
 		if (bOcean && WaveStrength > 0.0f)
 		{
 			// An ocean hit lifts the sea surface; the wave equation does the rest.
@@ -844,19 +879,21 @@ void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
 			UE_LOG(LogTemp, Display, TEXT("EARTHFALL_IMPACT ocean strike: %.3g Mt, cavity %.1f km, displaced %.3g km3, wave strength %.2f"),
 				Impactor.Megatons(), Impactor.WaterCavityRadiusMeters() / 1000.0, Impactor.DisplacedWaterKm3(), WaveStrength);
 		}
-		else if (!bOcean && (Weapon == 0 || Weapon == 1 || Weapon == 2 || bNuclear))
+		else if (!bOcean && !bEmp && (Weapon == 0 || Weapon == 1 || Weapon == 2 || bNuclear || bIncendiary))
 		{
 			// Thermal weapons light the blast rim; the automaton spreads it downwind.
 			if (FireRTs.IsValidIndex(FireReadIndex))
 			{
 				StampInto(FireRTs[FireReadIndex], FireRingStampTexture, LocalDirection, BlastAngle * 1.12f, FLinearColor(1.0f, 0.0f, 0.0f, 1.0f));
+				// An incendiary lights the whole footprint and well beyond it, not just the rim.
+				if (bIncendiary) StampInto(FireRTs[FireReadIndex], AshStampTexture, LocalDirection, BlastAngle * 1.9f, FLinearColor(1.0f, 0.0f, 0.0f, 1.0f));
 			}
 			FireActiveSeconds = FireTailSeconds;
 			AshActiveSeconds = FMath::Max(AshActiveSeconds, FireTailSeconds);
 		}
 	}
 	UpdateEnvironment();
-	if (!bOceanStrike) DeformCrater(LocalDirection, Strike);
+	if (!bOceanStrike && !bEmp && !bIncendiary) DeformCrater(LocalDirection, Strike);
 	if (UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>()) Sandbox->NotifyStrike(LocalDirection, Strike);
 
 	FActorSpawnParameters Params;
@@ -880,7 +917,7 @@ void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
 
 	// The tall, slow part: an ash column on land, a splash crown and steam at sea.
 	const int32 StruckWith = Strike.WeaponIndex;
-	if (StruckWith == 0 || StruckWith == 2 || StruckWith == 4 || bNuclear)
+	if (!bEmp && (StruckWith == 0 || StruckWith == 2 || StruckWith == 4 || bNuclear))
 	{
 		if (AEarthfallPlume* Plume = GetWorld()->SpawnActor<AEarthfallPlume>(
 			AEarthfallPlume::StaticClass(), SurfacePoint, FRotationMatrix::MakeFromZ(WorldNormal).Rotator(), Params))
@@ -980,6 +1017,7 @@ void AEarthfallPlanet::BindSimulationTextures()
 	if (TsunamiRTs.IsValidIndex(TsunamiReadIndex)) SurfaceMID->SetTextureParameterValue(TEXT("TsunamiRT"), TsunamiRTs[TsunamiReadIndex]);
 	if (FireRTs.IsValidIndex(FireReadIndex)) SurfaceMID->SetTextureParameterValue(TEXT("FireMaskRT"), FireRTs[FireReadIndex]);
 	if (PlagueRT) SurfaceMID->SetTextureParameterValue(TEXT("PlagueRT"), PlagueRT);
+	if (CityGrowthTexture) SurfaceMID->SetTextureParameterValue(TEXT("CityGrowthTexture"), CityGrowthTexture);
 }
 
 void AEarthfallPlanet::StampInto(UTextureRenderTarget2D* Target, UTexture2D* Texture, const FVector& LocalDirection, float AngularRadius, const FLinearColor& Tint)
@@ -1132,4 +1170,33 @@ void AEarthfallPlanet::SetBioZones(const TArray<FVector4>& Zones, const TArray<F
 		DrawStamp(Canvas, CanvasSize, AshStampTexture, FVector(Zones[Index].X, Zones[Index].Y, Zones[Index].Z), Zones[Index].W, Colours[Index]);
 	}
 	UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(GetWorld(), Context);
+}
+
+void AEarthfallPlanet::UpdateCityGrowthTexture()
+{
+	const UEarthfallPopulationSubsystem* Population = GetWorld() ? GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>() : nullptr;
+	if (!Population) return;
+	const int32 Width = UEarthfallPopulationSubsystem::GrowthGridWidth();
+	const int32 Height = UEarthfallPopulationSubsystem::GrowthGridHeight();
+	Population->FillCityGrowth(CityGrowthBytes);
+	if (CityGrowthBytes.Num() != Width * Height) return;
+	if (!CityGrowthTexture)
+	{
+		CityGrowthTexture = UTexture2D::CreateTransient(Width, Height, PF_G8);
+		if (!CityGrowthTexture) return;
+		// Data, not colour; wraps east-west like every other equirectangular map.
+		CityGrowthTexture->SRGB = false;
+		CityGrowthTexture->Filter = TF_Bilinear;
+		CityGrowthTexture->AddressX = TA_Wrap;
+		CityGrowthTexture->AddressY = TA_Clamp;
+	}
+	if (!CityGrowthTexture->GetPlatformData() || CityGrowthTexture->GetPlatformData()->Mips.IsEmpty()) return;
+	FTexture2DMipMap& Mip = CityGrowthTexture->GetPlatformData()->Mips[0];
+	if (void* Pixels = Mip.BulkData.Lock(LOCK_READ_WRITE))
+	{
+		FMemory::Memcpy(Pixels, CityGrowthBytes.GetData(), CityGrowthBytes.Num());
+	}
+	Mip.BulkData.Unlock();
+	CityGrowthTexture->UpdateResource();
+	BindSimulationTextures();
 }

@@ -64,6 +64,10 @@ public:
 	/** Launch a specific weapon at a planet-local direction, whatever is selected, ignoring cooldown. */
 	void LaunchWeaponAt(const FVector& PlanetLocalDirection, int32 Weapon, float Yield, float RadiusMultiplier, float Fallout);
 	UEarthfallAudioComponent* GetAudio() const { return Audio; }
+	/** The shell loaded for the next launch: one of EarthfallMunitions. */
+	int32 GetMunition() const { return MunitionIndex; }
+	void SelectMunition(int32 Index);
+	void CycleMunition() { SelectMunition((MunitionIndex + 1) % EarthfallMunitions::Count); }
 	void AdjustMultiplier(EEarthfallMultiplier Kind, int32 Delta);
 	void SetMultiplierIndex(EEarthfallMultiplier Kind, int32 Index);
 	void ResetSimulation();
@@ -143,6 +147,7 @@ private:
 
 	int32 WeaponIndex = 0;
 	int32 ToolTab = 0;
+	int32 MunitionIndex = 0;
 	int32 ToolSlot[3] = {0, 0, 0};
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<UEarthfallAudioComponent> Audio;

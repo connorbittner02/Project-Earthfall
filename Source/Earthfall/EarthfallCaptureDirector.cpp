@@ -393,7 +393,49 @@ void AEarthfallCaptureDirector::BuildScript()
 	At(206.0f, [this]() { Shot(TEXT("53-terrain-plague-rage")); });
 	At(206.2f, [=]() { View(-100.0f, 18.6f, 100.25f); });
 	At(214.0f, [this]() { Shot(TEXT("54-terrain-rage-low")); });
-	At(214.6f, [this]() { Finish(); });
+	// --- Munitions, from a clean world. A MIRV thermonuclear bus over the Great
+	// Plains: the split in flight, then six ground bursts.
+	At(214.6f, [=, this]()
+	{
+		AEarthOrbitPawn* P = Pawn();
+		if (!P) return;
+		P->ResetSimulation();
+		P->SetHudMode(EEarthfallHudMode::Full);
+		View(-100.0f, 30.0f, 300.0f);
+		Weapon(EarthfallWeapons::Nuclear, EarthfallMultipliers::DefaultIndex);
+		P->SelectMunition(EarthfallMunitions::Cluster);
+	});
+	At(215.6f, [=]() { Fire(40.0, -99.0); });
+	At(217.05f, [this]() { Shot(TEXT("55-mirv-split")); });
+	At(218.3f, [this]() { Shot(TEXT("56-mirv-impacts")); });
+	// An EMP grid-buster over northern India at night: lights out, nothing burned.
+	At(218.5f, [=, this]() { View(79.0f, 22.0f, 300.0f); Weapon(0, EarthfallMultipliers::DefaultIndex); if (AEarthOrbitPawn* P = Pawn()) P->SelectMunition(EarthfallMunitions::Emp); });
+	At(220.0f, [this]() { Shot(TEXT("57-before-emp")); });
+	At(220.1f, [=]() { Fire(25.5, 80.0); });
+	At(223.6f, [this]() { Shot(TEXT("58-emp-blackout")); });
+	// A growing city: Japan before and after sixteen seconds of boosted growth.
+	At(223.8f, [=, this]() { View(138.0f, 36.0f, 205.0f); if (AEarthOrbitPawn* P = Pawn()) { P->SelectMunition(EarthfallMunitions::Standard); P->InspectDirection(EarthfallSolar::DirectionFromLatLon(35.7, 139.7)); } });
+	At(225.6f, [this]() { Shot(TEXT("59-city-before-growth")); });
+	At(225.7f, [this]()
+	{
+		if (UEarthfallPopulationSubsystem* People = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>())
+		{
+			People->BoostCountryGrowth(People->GetCountryAtDirection(EarthfallSolar::DirectionFromLatLon(35.7, 139.7)), 28.0f, 16.0f);
+		}
+	});
+	At(243.5f, [this]()
+	{
+		Shot(TEXT("60-city-sprawl-after-growth"));
+		FString Name;
+		int32 Tier = 0;
+		float Growth = 1.0f;
+		const UEarthfallPopulationSubsystem* People = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>();
+		if (People && People->GetLargestCity(People->GetCountryAtDirection(EarthfallSolar::DirectionFromLatLon(35.7, 139.7)), Name, Tier, Growth))
+		{
+			UE_LOG(LogEarthfallCapture, Display, TEXT("EARTHFALL_CAPTURE city %s tier=%s growth=%.2fx"), *Name, UEarthfallPopulationSubsystem::CityTierLabel(Tier), Growth);
+		}
+	});
+	At(244.2f, [this]() { Finish(); });
 
 	Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
 }

@@ -101,6 +101,7 @@ void UEarthfallSandboxSubsystem::ResetSandbox()
 	InterceptCount = 0;
 	BioZones.Reset();
 	Routes.Reset();
+	EmpZones.Reset();
 	BorderCrises.Reset();
 	if (UEarthfallPopulationSubsystem* People = Population()) People->SetBorderStress(TMap<int32, float>());
 	InfectedNow = 0.0;
@@ -130,6 +131,8 @@ void UEarthfallSandboxSubsystem::BuildFactions()
 		Faction.MilitaryStrength = Power.Military;
 		Faction.NuclearStockpile = Power.Stockpile;
 		Faction.Bloc = Power.Bloc;
+		// The three great powers start a tier ahead.
+		Faction.TechTier = Power.Military >= 85.0f ? 1 : 0;
 		FactionByCountry.Add(CountryId, Factions.Num() - 1);
 	}
 	for (int32 A = 0; A < Factions.Num(); ++A)
@@ -246,6 +249,7 @@ bool UEarthfallSandboxSubsystem::GetFactionInfo(int32 CountryId, FEarthfallFacti
 	OutInfo.Code = Faction.Code;
 	OutInfo.MilitaryStrength = Faction.MilitaryStrength;
 	OutInfo.NuclearStockpile = Faction.NuclearStockpile;
+	OutInfo.TechTier = Faction.TechTier;
 	OutInfo.Infected = GetCountryInfected(CountryId);
 	OutInfo.AtWarWith.Reset();
 	OutInfo.Allies.Reset();
@@ -260,6 +264,27 @@ void UEarthfallSandboxSubsystem::NotifyStrike(const FVector& LocalDirection, con
 	if (!People) return;
 	if (!bFactionsBuilt) BuildFactions();
 	// Only a strike nobody owns (the player's) leaves a nation looking for someone to blame.
+	const float BlastAngle = FMath::Clamp(Strike.Radius / 100.0f, 0.01f, 2.6f);
+	if (Strike.Munition == EarthfallMunitions::Emp)
+	{
+		// Ground batteries under the pulse see nothing for a while.
+		EmpZones.Emplace(FVector4(LocalDirection.X, LocalDirection.Y, LocalDirection.Z, FMath::Cos(FMath::Min(BlastAngle * 3.5f, 1.5f))), WorldTime + 25.0f);
+	}
+	else if (Strike.Munition == EarthfallMunitions::Penetrator)
+	{
+		// A bunker-buster on a faction's soil goes for its silos and command posts.
+		const int32 StruckCountry = People->GetCountryAtDirection(LocalDirection);
+		if (const int32* Struck = FactionByCountry.Find(StruckCountry))
+		{
+			FFaction& Target = Factions[*Struck];
+			const int32 Lost = Target.NuclearStockpile - FMath::FloorToInt32(Target.NuclearStockpile * 0.6f);
+			Target.NuclearStockpile -= Lost;
+			Target.MilitaryStrength *= 0.72f;
+			BatteryReadyAt.Add(StruckCountry, WorldTime + 20.0f);
+			People->PostDispatch(FString::Printf(TEXT("[BUNKER-BUSTER] HARDENED SITES HIT IN %s  //  %d WARHEADS DESTROYED  //  MILITARY DOWN TO %.0f"),
+				*Target.Name, Lost, Target.MilitaryStrength), 6);
+		}
+	}
 	if (Strike.AttackerCountry != 0) return;
 	const int32* Index = FactionByCountry.Find(People->GetCountryAtDirection(LocalDirection));
 	if (!Index) return;
@@ -311,7 +336,7 @@ void UEarthfallSandboxSubsystem::Tick(float DeltaTime)
 	BuildMarkers();
 }
 
-void UEarthfallSandboxSubsystem::FireMissile(const FVector& FromDirection, float FromAltitudeScale, const FVector& AimDirection, int32 AttackerCountry, bool bNuclear)
+void UEarthfallSandboxSubsystem::FireMissile(const FVector& FromDirection, float FromAltitudeScale, const FVector& AimDirection, int32 AttackerCountry, bool bNuclear, int32 Munition)
 {
 	AEarthfallPlanet* Planet = FindPlanet();
 	if (!Planet || !GetWorld()) return;
@@ -325,6 +350,8 @@ void UEarthfallSandboxSubsystem::FireMissile(const FVector& FromDirection, float
 		? FEarthfallStrike::Make(Impact, EarthfallWeapons::Nuclear, 0.25f, 0.5f, 1.0f)
 		: FEarthfallStrike::Make(Impact, 0, 1.0f, 0.5f, 0.0f);
 	Strike.AttackerCountry = AttackerCountry;
+	Strike.Munition = Munition;
+	if (Munition == EarthfallMunitions::Penetrator) Strike.Radius *= 0.4f;
 
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -343,7 +370,7 @@ void UEarthfallSandboxSubsystem::LaunchMissile(FFaction& From, const FFaction& A
 	At.Capital.FindBestAxisVectors(TangentA, TangentB);
 	const float Angle = FMath::FRandRange(0.0f, 2.0f * PI);
 	const FVector Aim = (At.Capital + (TangentA * FMath::Cos(Angle) + TangentB * FMath::Sin(Angle)) * FMath::FRandRange(0.01f, 0.09f)).GetSafeNormal();
-	FireMissile(From.Capital, 1.004f, Aim, From.CountryId, bNuclear);
+	FireMissile(From.Capital, 1.004f, Aim, From.CountryId, bNuclear, PickMunition(From.TechTier));
 	++From.Exchanges;
 	if (bNuclear) --From.NuclearStockpile;
 }
@@ -639,7 +666,7 @@ void UEarthfallSandboxSubsystem::TickDefense(float DeltaTime)
 			const float Ready = BatteryReadyAt.FindRef(CountryId);
 			const float Alive = Stats.InitialPopulation > 0.0 ? static_cast<float>(Stats.LivingPopulation / Stats.InitialPopulation) : 0.0f;
 			const float Chance = Stats.DefenseReadiness / 100.0f * Alive * FMath::Square(Stats.GridPercent / 100.0f) * 0.85f;
-			if (WorldTime >= Ready && FMath::FRand() < Chance)
+			if (WorldTime >= Ready && !IsDefenseBlinded(Target) && FMath::FRand() < Chance)
 			{
 				bKill = true;
 				Defender = Stats.Name.ToUpper();
@@ -1385,4 +1412,34 @@ void UEarthfallSandboxSubsystem::TickBorders(float DeltaTime)
 			}
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Munitions and technology
+// ---------------------------------------------------------------------------
+const TCHAR* UEarthfallSandboxSubsystem::TechTierLabel(int32 Tier)
+{
+	static const TCHAR* Labels[] = {TEXT("CONVENTIONAL"), TEXT("HYPERSONIC"), TEXT("ORBITAL DEFENSE"), TEXT("FUSION SHIELDED")};
+	return Labels[FMath::Clamp(Tier, 0, 3)];
+}
+
+int32 UEarthfallSandboxSubsystem::PickMunition(int32 TechTier)
+{
+	// Conventional powers fire plain warheads. Hypersonic ones add clusters and
+	// penetrators; from orbital-defense tier up, grid-busters too.
+	const float Roll = FMath::FRand();
+	if (TechTier >= 2 && Roll < 0.18f) return EarthfallMunitions::Emp;
+	if (TechTier >= 1 && Roll < 0.45f) return EarthfallMunitions::Cluster;
+	if (TechTier >= 1 && Roll < 0.58f) return EarthfallMunitions::Penetrator;
+	if (TechTier >= 1 && Roll < 0.68f) return EarthfallMunitions::Incendiary;
+	return EarthfallMunitions::Standard;
+}
+
+bool UEarthfallSandboxSubsystem::IsDefenseBlinded(const FVector& LocalDirection) const
+{
+	for (const TPair<FVector4, float>& Zone : EmpZones)
+	{
+		if (WorldTime < Zone.Value && FVector::DotProduct(FVector(Zone.Key.X, Zone.Key.Y, Zone.Key.Z), LocalDirection) >= Zone.Key.W) return true;
+	}
+	return false;
 }

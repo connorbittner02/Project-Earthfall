@@ -128,6 +128,9 @@ private:
 	/** 512x256 RGBA8: R = infection, G = rage and insurgency. Redrawn from the sandbox's zones. */
 	UPROPERTY(Transient)
 	TObjectPtr<UTextureRenderTarget2D> PlagueRT;
+	/** One byte per population cell: how each cell's settled population compares with its baseline. */
+	UPROPERTY(Transient)
+	TObjectPtr<UTexture2D> CityGrowthTexture;
 	UPROPERTY(Transient)
 	TObjectPtr<UTexture2D> CraterStampTexture;
 	UPROPERTY(Transient)
@@ -162,6 +165,8 @@ private:
 		float Radius = 0.1f;
 		float Age = 0.0f;
 		bool bNuclear = false;
+		/** An EMP leaves only the blackout plateau: no scorch, no cleared cloud. */
+		bool bEmpOnly = false;
 		float HeatSeconds = 8.0f;
 		/** The cloud-clear disc grows behind the shock front, holds, then heals. */
 		float ClearMaxRadius = 0.2f;
@@ -212,6 +217,9 @@ private:
 	int32 AshReadIndex = 0;
 	float SurfaceFade = 1.0f;
 	float WinterLevel = 0.0f;
+	float CityGrowthTimer = 10.0f;
+	TArray<uint8> CityGrowthBytes;
+	void UpdateCityGrowthTexture();
 	TArray<FVector> SecondaryFireSites;
 	float WinterOverride = -1.0f;
 	float FamineTimer = 0.0f;

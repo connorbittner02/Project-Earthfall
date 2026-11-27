@@ -40,6 +40,8 @@ struct FEarthfallFactionInfo
 {
 	FString Code;
 	float MilitaryStrength = 0.0f;
+	/** 0 conventional, 1 hypersonic, 2 orbital defense, 3 fusion shielded. */
+	int32 TechTier = 0;
 	int32 NuclearStockpile = 0;
 	TArray<FString> AtWarWith;
 	TArray<FString> Allies;
@@ -92,6 +94,7 @@ public:
 	int32 GetInterceptCount() const { return InterceptCount; }
 	/** Pairs of factions currently at war. */
 	int32 GetActiveWarCount() const;
+	static const TCHAR* TechTierLabel(int32 Tier);
 	int32 GetFleetCount() const;
 	int32 GetBorderCrisisCount() const { return BorderCrises.Num(); }
 	double GetInfected() const { return InfectedNow; }
@@ -111,6 +114,7 @@ private:
 		float MilitaryStrength = 50.0f;
 		int32 NuclearStockpile = 0;
 		int32 Bloc = 0;
+		int32 TechTier = 0;
 		TArray<int32> AtWar;
 		TArray<int32> Allies;
 		float LaunchTimer = 2.0f;
@@ -203,6 +207,8 @@ private:
 	TMap<int32, TArray<int32>> Neighbours;
 	/** Countries already reported as overwhelmed by refugees. */
 	TSet<int32> BorderCrises;
+	/** Where an EMP has blinded ground batteries: XYZ direction, W cosine of the radius, and when it wears off. */
+	TArray<TPair<FVector4, float>> EmpZones;
 	/** Country ID -> a direction near the middle of it. */
 	TMap<int32, FVector> CountryCentres;
 	float BorderTimer = 0.0f;
@@ -241,7 +247,10 @@ private:
 	void LaunchMissile(FFaction& From, const FFaction& At, bool bNuclear);
 	/** Mode 0 picks a fleet when the target can be reached by sea, 1 forces a fleet, 2 an air wing. */
 	bool SpawnUnit(int32 Owner, int32 Target, const FVector& From, int32 Mode = 0);
-	void FireMissile(const FVector& FromDirection, float FromAltitudeScale, const FVector& AimDirection, int32 AttackerCountry, bool bNuclear);
+	void FireMissile(const FVector& FromDirection, float FromAltitudeScale, const FVector& AimDirection, int32 AttackerCountry, bool bNuclear, int32 Munition = 0);
+	/** The shell a faction of this tech tier loads for one shot. */
+	static int32 PickMunition(int32 TechTier);
+	bool IsDefenseBlinded(const FVector& LocalDirection) const;
 	void BuildWaterGrid();
 	/** A water-only route from near From to the reachable water nearest To. Empty if there is none. */
 	bool FindSeaRoute(const FVector& From, const FVector& To, TArray<FVector>& OutPath) const;
