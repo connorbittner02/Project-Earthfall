@@ -1,5 +1,6 @@
 #include "EarthOrbitPawn.h"
 #include "EarthfallPlanet.h"
+#include "EarthfallPopulationSubsystem.h"
 #include "Camera/CameraComponent.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -91,6 +92,8 @@ void AEarthOrbitPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
     PlayerInputComponent->BindAction(TEXT("Weapon1"), IE_Pressed, this, &AEarthOrbitPawn::SelectWeapon1);
     PlayerInputComponent->BindAction(TEXT("Weapon2"), IE_Pressed, this, &AEarthOrbitPawn::SelectWeapon2);
     PlayerInputComponent->BindAction(TEXT("Weapon3"), IE_Pressed, this, &AEarthOrbitPawn::SelectWeapon3);
+    PlayerInputComponent->BindAction(TEXT("Weapon4"), IE_Pressed, this, &AEarthOrbitPawn::SelectWeapon4);
+    PlayerInputComponent->BindAction(TEXT("Weapon5"), IE_Pressed, this, &AEarthOrbitPawn::SelectWeapon5);
     PlayerInputComponent->BindAction(TEXT("ResetSimulation"), IE_Pressed, this, &AEarthOrbitPawn::ResetSimulation);
 }
 
@@ -142,12 +145,13 @@ void AEarthOrbitPawn::FireImpact()
     {
         for (TActorIterator<AEarthfallPlanet> It(GetWorld()); It; ++It)
         {
-            static const float Radii[] = {8.0f, 15.0f, 25.0f};
-            static const float Energies[] = {50.0f, 100.0f, 180.0f};
+            static const float Radii[] = {8.0f, 15.0f, 25.0f, 19.0f, 13.0f};
+            static const float Energies[] = {50.0f, 100.0f, 180.0f, 145.0f, 110.0f};
             It->ApplyImpact(Hit.ImpactPoint, Radii[WeaponIndex], Energies[WeaponIndex], WeaponIndex);
             TriggerImpactShake();
             ++ImpactCount;
-            CooldownDuration = WeaponIndex == 0 ? 0.35f : (WeaponIndex == 1 ? 0.8f : 1.5f);
+            static const float Cooldowns[] = {0.35f, 0.8f, 1.5f, 2.0f, 1.25f};
+            CooldownDuration = Cooldowns[WeaponIndex];
             CooldownRemaining = CooldownDuration;
             StatusMessage = FString::Printf(TEXT("IMPACT CONFIRMED  //  #%04d"), ImpactCount);
             MessageTimer = 1.2f;
@@ -181,14 +185,14 @@ void AEarthOrbitPawn::UpdateAimState()
 
 float AEarthOrbitPawn::GetCurrentBlastRadius() const
 {
-    static const float Radii[] = {8.0f, 15.0f, 25.0f};
+    static const float Radii[] = {8.0f, 15.0f, 25.0f, 19.0f, 13.0f};
     return Radii[WeaponIndex];
 }
 
 void AEarthOrbitPawn::TriggerImpactShake()
 {
-    static const float Strengths[] = {0.8f, 1.4f, 3.0f};
-    static const float Durations[] = {0.22f, 0.34f, 0.72f};
+    static const float Strengths[] = {0.8f, 1.4f, 3.0f, 2.2f, 1.7f};
+    static const float Durations[] = {0.22f, 0.34f, 0.72f, 0.55f, 0.42f};
     ShakeStrength = Strengths[WeaponIndex];
     ShakeDuration = Durations[WeaponIndex];
     ShakeTimeRemaining = ShakeDuration;
@@ -196,8 +200,8 @@ void AEarthOrbitPawn::TriggerImpactShake()
 
 void AEarthOrbitPawn::SelectWeapon(int32 Index)
 {
-    WeaponIndex = FMath::Clamp(Index, 0, 2);
-    static const TCHAR* Names[] = {TEXT("KINETIC ROD"), TEXT("PLASMA LANCE"), TEXT("MANTLE CHARGE")};
+    WeaponIndex = FMath::Clamp(Index, 0, 4);
+    static const TCHAR* Names[] = {TEXT("KINETIC ROD"), TEXT("PLASMA LANCE"), TEXT("MANTLE CHARGE"), TEXT("MICRO BLACK HOLE"), TEXT("CRYO IMPACTOR")};
     StatusMessage = FString::Printf(TEXT("WEAPON SELECTED  //  %s"), Names[WeaponIndex]);
     MessageTimer = 1.0f;
 }
@@ -205,10 +209,13 @@ void AEarthOrbitPawn::SelectWeapon(int32 Index)
 void AEarthOrbitPawn::SelectWeapon1() { SelectWeapon(0); }
 void AEarthOrbitPawn::SelectWeapon2() { SelectWeapon(1); }
 void AEarthOrbitPawn::SelectWeapon3() { SelectWeapon(2); }
+void AEarthOrbitPawn::SelectWeapon4() { SelectWeapon(3); }
+void AEarthOrbitPawn::SelectWeapon5() { SelectWeapon(4); }
 
 void AEarthOrbitPawn::ResetSimulation()
 {
     for (TActorIterator<AEarthfallPlanet> It(GetWorld()); It; ++It) It->ResetPlanet();
+    if (UEarthfallPopulationSubsystem* Population = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>()) Population->ResetSimulation();
     ImpactCount = 0;
     CooldownRemaining = 0.0f;
     StatusMessage = TEXT("PLANET RESTORED");

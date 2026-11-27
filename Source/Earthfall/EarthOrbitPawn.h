@@ -34,6 +34,8 @@ protected:
     void SelectWeapon1();
     void SelectWeapon2();
     void SelectWeapon3();
+    void SelectWeapon4();
+    void SelectWeapon5();
     void ResetSimulation();
     void SelectWeapon(int32 Index);
     void UpdateAimState();

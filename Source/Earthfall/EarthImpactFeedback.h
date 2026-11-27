@@ -23,11 +23,12 @@ public:
     float PeakFlashIntensity = 22000.0f;
     float ExpansionRadius = 90.0f;
     FLinearColor AccentColor = FLinearColor(1.0f, 0.3f, 0.06f);
+    bool bImplosion = false;
     UPROPERTY()
     TObjectPtr<class UMaterialInstanceDynamic> RingMaterial;
     UPROPERTY()
     TObjectPtr<class UMaterialInstanceDynamic> BeamMaterial;
-    void InitFeedback(float ImpactRadius, FLinearColor InAccentColor, float InLifetime, bool bShowBeam, float FlashIntensity);
+    void InitFeedback(float ImpactRadius, FLinearColor InAccentColor, float InLifetime, bool bShowBeam, float FlashIntensity, bool bInImplosion = false);
     virtual void Tick(float DeltaSeconds) override;
 private:
     void BuildRing();
