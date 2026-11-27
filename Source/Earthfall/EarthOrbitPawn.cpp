@@ -18,8 +18,10 @@ AEarthOrbitPawn::AEarthOrbitPawn()
     Camera->SetupAttachment(Root);
     PlanetFillLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("PlanetFillLight"));
     PlanetFillLight->SetupAttachment(Camera);
-    PlanetFillLight->SetIntensity(9000.0f);
-    PlanetFillLight->SetAttenuationRadius(1800.0f);
+    // The directional sun supplies the main key light; this low camera fill
+    // keeps the night-facing half readable without washing out the polar cap.
+    PlanetFillLight->SetIntensity(2800.0f);
+    PlanetFillLight->SetAttenuationRadius(1400.0f);
     PlanetFillLight->SetLightColor(FLinearColor(0.30f, 0.52f, 1.0f));
     PlanetFillLight->SetCastShadows(false);
     AutoPossessPlayer = EAutoReceiveInput::Player0;
