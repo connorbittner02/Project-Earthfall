@@ -5,6 +5,7 @@
 #include "EarthfallProjectile.h"
 #include "Camera/CameraComponent.h"
 #include "Components/InputComponent.h"
+#include "CoreGlobals.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Framework/Application/SlateApplication.h"
@@ -100,8 +101,12 @@ void AEarthOrbitPawn::Tick(float DeltaSeconds)
 	// Drag speed follows altitude, so the ground slides under the cursor at the
 	// same screen rate from high orbit down to the cloud tops.
 	const AEarthfallPlanet* OrbitPlanet = FindPlanet();
-	const float OrbitRadius = OrbitPlanet ? OrbitPlanet->PlanetRadius : 100.0f;
-	const float AltitudeRatio = FMath::Clamp((Distance - OrbitRadius) / (DefaultOrbitDistance - OrbitRadius), 0.009f, 1.6f);
+	const float SphereRadius = OrbitPlanet ? OrbitPlanet->PlanetRadius : 100.0f;
+	// Altitude is measured from streamed terrain once it has taken over.
+	const float OrbitRadius = TerrainRadius > 0.0f ? TerrainRadius : SphereRadius;
+	const float MinDistance = MinOrbitDistance > 0.0f ? MinOrbitDistance : SphereRadius * MinOrbitDistanceScale;
+	GoalDistance = FMath::Max(GoalDistance, MinDistance);
+	const float AltitudeRatio = FMath::Clamp((Distance - OrbitRadius) / (DefaultOrbitDistance - OrbitRadius), 0.0003f, 1.6f);
 	GoalYaw += PendingOrbit.X * AltitudeRatio;
 	GoalPitch = FMath::Clamp(GoalPitch + PendingOrbit.Y * AltitudeRatio, -80.0f, 80.0f);
 	PendingOrbit = FVector2D::ZeroVector;
@@ -112,8 +117,8 @@ void AEarthOrbitPawn::Tick(float DeltaSeconds)
 	Yaw += (GoalYaw - Yaw) * OrbitAlpha;
 	Pitch += (GoalPitch - Pitch) * OrbitAlpha;
 	const float ZoomAlpha = 1.0f - FMath::Exp(-DeltaSeconds * 7.0f);
-	const float Altitude = FMath::Max(Distance - OrbitRadius, 0.01f);
-	const float GoalAltitude = FMath::Max(GoalDistance - OrbitRadius, 0.01f);
+	const float Altitude = FMath::Max(Distance - OrbitRadius, 0.001f);
+	const float GoalAltitude = FMath::Max(GoalDistance - OrbitRadius, 0.001f);
 	Distance = OrbitRadius + Altitude * FMath::Pow(GoalAltitude / Altitude, ZoomAlpha);
 
 	// The camera sits at (Yaw, Pitch) over the planet and looks at its centre.
@@ -123,7 +128,12 @@ void AEarthOrbitPawn::Tick(float DeltaSeconds)
 	// horizon, so a descent ends looking across the terrain at the limb.
 	const float AltitudeFraction = (Distance - OrbitRadius) / OrbitRadius;
 	const float Tilt = LowOrbitTiltDegrees * (1.0f - FMath::SmoothStep(MinOrbitDistanceScale - 1.0f, LowOrbitTiltStart, AltitudeFraction));
-	CameraRotation = (CameraRotation.Quaternion() * FRotator(Tilt, 0.0f, 0.0f).Quaternion()).Rotator();
+	// Below the procedural floor, over streamed terrain, the horizon flattens
+	// toward eye level, so the camera keeps pitching up to hold it in frame.
+	const float DeepTilt = 14.0f * (1.0f - FMath::SmoothStep(0.0015f, MinOrbitDistanceScale - 1.0f, AltitudeFraction));
+	CameraRotation = (CameraRotation.Quaternion() * FRotator(Tilt + DeepTilt, 0.0f, 0.0f).Quaternion()).Rotator();
+	// The near plane closes in with the ground; it is back at 0.1 by 2 units up.
+	GNearClippingPlane = FMath::Clamp((Distance - OrbitRadius) * 0.05f, 0.004f, 0.1f);
 
 	ShakeTimeRemaining = FMath::Max(0.0f, ShakeTimeRemaining - DeltaSeconds);
 	ShakePhase += DeltaSeconds;
@@ -201,9 +211,11 @@ void AEarthOrbitPawn::ZoomInput(float Value)
 	const float Radius = Planet ? Planet->PlanetRadius : 100.0f;
 	if (Value == 0.0f) return;
 	// Each wheel notch covers a fixed share of the remaining altitude.
-	const float Altitude = FMath::Max(0.0f, GoalDistance - Radius);
-	const float ZoomStep = FMath::Clamp(Altitude * 0.13f, 0.10f, 24.0f);
-	GoalDistance = FMath::Clamp(GoalDistance - Value * ZoomStep, Radius * MinOrbitDistanceScale, MaxOrbitDistance);
+	const float Ground = TerrainRadius > 0.0f ? TerrainRadius : Radius;
+	const float MinDistance = MinOrbitDistance > 0.0f ? MinOrbitDistance : Radius * MinOrbitDistanceScale;
+	const float Altitude = FMath::Max(0.0f, GoalDistance - Ground);
+	const float ZoomStep = FMath::Clamp(Altitude * 0.13f, 0.004f, 24.0f);
+	GoalDistance = FMath::Clamp(GoalDistance - Value * ZoomStep, MinDistance, MaxOrbitDistance);
 }
 
 void AEarthOrbitPawn::SetOrbitView(float LongitudeDegrees, float LatitudeDegrees, float InDistance)
@@ -213,7 +225,7 @@ void AEarthOrbitPawn::SetOrbitView(float LongitudeDegrees, float LatitudeDegrees
 	// East is -Y in Unreal's left-handed world, so longitude runs against yaw.
 	Yaw = -LongitudeDegrees;
 	Pitch = FMath::Clamp(LatitudeDegrees, -80.0f, 80.0f);
-	Distance = FMath::Clamp(InDistance, Radius * MinOrbitDistanceScale, MaxOrbitDistance);
+	Distance = FMath::Clamp(InDistance, MinOrbitDistance > 0.0f ? MinOrbitDistance : Radius * MinOrbitDistanceScale, MaxOrbitDistance);
 	// A scripted view is a cut, not a move.
 	GoalYaw = Yaw;
 	GoalPitch = Pitch;
@@ -477,7 +489,9 @@ void AEarthOrbitPawn::UpdateTargetPreviewRing()
 	const FVector Center = Planet->GetActorLocation();
 	const FVector Normal = (AimHit.ImpactPoint - Center).GetSafeNormal();
 	const float Angle = FMath::Clamp(GetCurrentBlastRadius() / Planet->PlanetRadius, 0.01f, 2.6f);
-	const float Altitude = Planet->PlanetRadius * PreviewAltitudeScale;
+	// Above the cloud tops in orbit; over streamed terrain it drops with the camera.
+	const float Ground = TerrainRadius > 0.0f ? TerrainRadius : Planet->PlanetRadius;
+	const float Altitude = FMath::Min(Planet->PlanetRadius * PreviewAltitudeScale, Ground + 0.4f * FMath::Max(Distance - Ground, 0.0f));
 	// Constant on-screen thickness regardless of zoom.
 	const float HalfWidth = FMath::Clamp((Distance - Planet->PlanetRadius) * 0.0042f / Planet->PlanetRadius, 0.0025f, 0.03f);
 	FVector TangentA;

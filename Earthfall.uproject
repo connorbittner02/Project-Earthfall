@@ -32,6 +32,11 @@
 			"TargetAllowList": [
 				"Editor"
 			]
+		},
+		{
+			"Name": "CesiumForUnreal",
+			"Enabled": true,
+			"Optional": true
 		}
 	]
 }

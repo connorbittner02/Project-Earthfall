@@ -199,6 +199,52 @@ FVector AEarthfallPlanet::GetSunDirectionWorld() const
 	return GetActorTransform().TransformVectorNoScale(SunDirectionLocal).GetSafeNormal();
 }
 
+void AEarthfallPlanet::BindSimulationTextures(UMaterialInstanceDynamic* Material) const
+{
+	if (!Material) return;
+	if (ImpactMaskRT) Material->SetTextureParameterValue(TEXT("ImpactMaskRT"), ImpactMaskRT);
+	if (CraterRT) Material->SetTextureParameterValue(TEXT("CraterRT"), CraterRT);
+	if (AshPlumeRTs.IsValidIndex(AshReadIndex)) Material->SetTextureParameterValue(TEXT("AshPlumeRT"), AshPlumeRTs[AshReadIndex]);
+	if (TsunamiRTs.IsValidIndex(TsunamiReadIndex)) Material->SetTextureParameterValue(TEXT("TsunamiRT"), TsunamiRTs[TsunamiReadIndex]);
+	if (FireRTs.IsValidIndex(FireReadIndex)) Material->SetTextureParameterValue(TEXT("FireMaskRT"), FireRTs[FireReadIndex]);
+}
+
+void AEarthfallPlanet::SetSurfaceFade(float Fade)
+{
+	Fade = FMath::Clamp(Fade, 0.0f, 1.0f);
+	if (FMath::IsNearlyEqual(Fade, SurfaceFade, 0.0005f)) return;
+	SurfaceFade = Fade;
+	if (SurfaceMID) SurfaceMID->SetVectorParameterValue(TEXT("SurfaceFade"), FLinearColor(Fade, 0.0f, 0.0f, 0.0f));
+	if (PlanetMesh) PlanetMesh->SetVisibility(Fade > 0.001f);
+}
+
+void AEarthfallPlanet::SetCameraDistance(float Distance, float AimRadius)
+{
+	// A cloud shell is a single surface: it cannot be flown through. Each deck
+	// thins out over the last stretch above it, so the camera passes clear air.
+	auto Proximity = [this, Distance](float Scale)
+	{
+		const float Shell = PlanetRadius * Scale;
+		return FMath::SmoothStep(Shell + 0.10f, Shell + 0.90f, Distance);
+	};
+	const float Low = Proximity(LowCloudScale);
+	const float High = Proximity(HighCloudScale);
+	if (LowCloudMID && !FMath::IsNearlyEqual(Low, LowCloudProximity, 0.002f))
+	{
+		LowCloudProximity = Low;
+		LowCloudMID->SetVectorParameterValue(TEXT("Look"), FLinearColor(LowCloudLook.R * Low, LowCloudLook.G, LowCloudLook.B, LowCloudLook.A));
+	}
+	if (HighCloudMID && !FMath::IsNearlyEqual(High, HighCloudProximity, 0.002f))
+	{
+		HighCloudProximity = High;
+		HighCloudMID->SetVectorParameterValue(TEXT("Look"), FLinearColor(HighCloudLook.R * High, HighCloudLook.G, HighCloudLook.B, HighCloudLook.A));
+	}
+	if (AimCollisionProxy && !FMath::IsNearlyEqual(AimCollisionProxy->GetUnscaledSphereRadius(), AimRadius, 0.001f))
+	{
+		AimCollisionProxy->SetSphereRadius(AimRadius);
+	}
+}
+
 void AEarthfallPlanet::ForEachShadedMaterial(TFunctionRef<void(UMaterialInstanceDynamic*)> Visit) const
 {
 	for (UMaterialInstanceDynamic* Material : {SurfaceMID.Get(), LowCloudMID.Get(), HighCloudMID.Get(), AtmosphereMID.Get()})
@@ -286,6 +332,8 @@ void AEarthfallPlanet::BuildPlanetMesh()
 	PlanetMesh->ClearMeshSection(0);
 	PlanetMesh->CreateMeshSection_LinearColor(0, DeformedVertices, Triangles, Normals, UVs, VertexColors, Tangents, false);
 	if (SurfaceMID) PlanetMesh->SetMaterial(0, SurfaceMID);
+	// The terrain decal is for streamed tiles only; the globe shades its own destruction.
+	PlanetMesh->SetReceivesDecals(false);
 }
 
 void AEarthfallPlanet::BuildShell(UProceduralMeshComponent* Shell, float RadiusScale, UMaterialInstanceDynamic* Material, int32 SortPriority)

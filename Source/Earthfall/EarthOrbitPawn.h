@@ -67,6 +67,8 @@ public:
 	void InspectDirection(const FVector& PlanetLocalDirection);
 	/** Point the camera at a longitude/latitude from a given distance from the planet centre. */
 	void SetOrbitView(float LongitudeDegrees, float LatitudeDegrees, float InDistance);
+	/** Streamed terrain lowers the ground reference and the orbit floor; zeros restore the planet defaults. */
+	void SetTerrainFloor(float InTerrainRadius, float InMinDistance) { TerrainRadius = InTerrainRadius; MinOrbitDistance = InMinDistance; }
 	/** Launch the selected weapon at a planet-local unit direction, ignoring cooldown. */
 	bool FireAtDirection(const FVector& PlanetLocalDirection);
 
@@ -116,6 +118,9 @@ private:
 	float GoalYaw = 0.0f;
 	float GoalPitch = 10.0f;
 	float GoalDistance = 475.0f;
+	/** Set by the terrain streamer: the ground radius altitude is measured from, and the orbit floor. Zero means the planet defaults. */
+	float TerrainRadius = 0.0f;
+	float MinOrbitDistance = 0.0f;
 	FVector2D PendingOrbit = FVector2D::ZeroVector;
 	FHitResult AimHit;
 	bool bIsOrbiting = false;

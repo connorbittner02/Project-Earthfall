@@ -291,6 +291,16 @@ def build_surface(day, night, normal, masks, countries, black):
     ] + shock_inputs(material, 1500)
     shading = custom(material, "earth_surface.hlsl", inputs, unreal.CustomMaterialOutputType.CMOT_FLOAT3)
     output(shading, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    # Masked, so the surface can dissolve onto streamed terrain in low orbit.
+    # SurfaceFade.x is 1 in orbit, where the mask passes every pixel.
+    material.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED)
+    material.set_editor_property("opacity_mask_clip_value", 0.5)
+    fade = custom(material, "surface_fade.hlsl", [
+        ("Pixel", node(material, unreal.MaterialExpressionScreenPosition, -1300, 1900), "PixelPosition"),
+        ("Time", node(material, unreal.MaterialExpressionTime, -1300, 1960), ""),
+        ("Fade", vector_parameter(material, "SurfaceFade", (1.0, 0.0, 0.0, 0.0), 2000), "RGBA"),
+    ], unreal.CustomMaterialOutputType.CMOT_FLOAT1)
+    output(fade, "", unreal.MaterialProperty.MP_OPACITY_MASK)
     finish_material(material, MATERIAL_DIR, "M_EarthPhotoreal")
 
 
@@ -318,6 +328,41 @@ def build_clouds(black):
     output(mask(material, shading, "rgb"), "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
     output(mask(material, shading, "a"), "", unreal.MaterialProperty.MP_OPACITY)
     finish_material(material, MATERIAL_DIR, "M_EarthClouds")
+
+
+def build_terrain_decal(black):
+    """Deferred decal that paints the destruction simulations onto streamed terrain."""
+    material = create_material(MATERIAL_DIR, "M_TerrainDestruction")
+    material.set_editor_property("material_domain", unreal.MaterialDomain.MD_DEFERRED_DECAL)
+    material.set_editor_property("blend_mode", unreal.BlendMode.BLEND_TRANSLUCENT)
+
+    def shade(mode, y):
+        world = node(material, unreal.MaterialExpressionWorldPosition, -1500, y)
+        relative = node(material, unreal.MaterialExpressionTransformPosition, -1300, y)
+        relative.set_editor_property("transform_source_type", unreal.MaterialPositionTransformSource.TRANSFORMPOSSOURCE_WORLD)
+        relative.set_editor_property("transform_type", unreal.MaterialPositionTransformSource.TRANSFORMPOSSOURCE_TRANSLATED_WORLD)
+        connect(world, "", relative, "")
+        constant = node(material, unreal.MaterialExpressionConstant, -900, y + 900)
+        constant.set_editor_property("r", float(mode))
+        return custom(material, "terrain_decal.hlsl", [
+            ("RelPos", relative, ""),
+            ("CamPos", vector_parameter(material, "CameraPos", (0.0, 0.0, 0.0, 0.0), y + 60), "RGB"),
+            ("MaskTex", texture_object(material, "ImpactMaskRT", black, y + 120), ""),
+            ("AshTex", texture_object(material, "AshPlumeRT", black, y + 240), ""),
+            ("CraterTex", texture_object(material, "CraterRT", black, y + 360), ""),
+            ("WaveTex", texture_object(material, "TsunamiRT", black, y + 480), ""),
+            ("FireTex", texture_object(material, "FireMaskRT", black, y + 600), ""),
+            ("Time", node(material, unreal.MaterialExpressionTime, -900, y + 720), ""),
+            ("Terrain", vector_parameter(material, "Terrain", (0.0, 0.0, 0.0, 0.0), y + 780), "RGBA"),
+            ("Mode", constant, ""),
+        ], unreal.CustomMaterialOutputType.CMOT_FLOAT4)
+
+    colour = shade(0, 0)
+    glow = shade(1, 1200)
+    output(mask(material, colour, "rgb"), "", unreal.MaterialProperty.MP_BASE_COLOR)
+    output(mask(material, colour, "a"), "", unreal.MaterialProperty.MP_OPACITY)
+    output(mask(material, glow, "rgb"), "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    finish_material(material, MATERIAL_DIR, "M_TerrainDestruction")
 
 
 def build_atmosphere():
@@ -512,6 +557,7 @@ def main():
     build_surface(day, night, normal, masks, countries, black)
     build_clouds(black)
     build_atmosphere()
+    build_terrain_decal(black)
     build_space(sky)
     build_sun("M_EarthSun", (0.0, 42.0, 0.0, 0.0), additive=False)
     build_sun("M_SunCorona", (1.0, 1.0, 0.0, 0.0), additive=True)

@@ -9,3 +9,7 @@ Scripts/__pycache__/
 *.sln
 *.VC.db
 *.VC.opendb
+Plugins/CesiumForUnreal/
+# Holds the Cesium ion access token once it is set in the editor: a credential, never committed.
+Content/CesiumSettings/
+cesium-request-cache.sqlite*

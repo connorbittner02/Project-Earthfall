@@ -92,3 +92,36 @@ not be merged; they should hand over.
 - Night city lights at lowest orbit still show the source texel grid.
 - Faint straight slivers can appear in thin cloud right at the horizon of a cloud shell,
   where the 160x320 shell mesh shows its facets.
+
+## Status on `feature/cesium-30k-ft`
+
+Built and compiling; **not yet seen with tiles**, because no Cesium ion token is set.
+
+- `Plugins/CesiumForUnreal/` restored and git-ignored; enabled as `"Optional": true`.
+  `Earthfall.Build.cs` defines `EARTHFALL_WITH_CESIUM` when the folder exists.
+- `AEarthfallTerrainStreamer` spawns a `CesiumGeoreference` (true origin, scale
+  `0.9985 * PlanetRadius / 6378137`) and a Cesium World Terrain tileset with Bing aerial
+  imagery. The ellipsoid sits 0.15% under the planet sphere so every tile, Everest
+  included, is hidden beneath the globe until the hand-over.
+- Hand-over between 1.10 R and 1.035 R: `M_EarthPhotoreal` is now masked and dissolves
+  through a temporal dither (`surface_fade.hlsl`) onto the tiles.
+- The orbit floor drops to 30,000 ft (9,144 m, 0.143 units) above the ellipsoid, with a
+  closer near plane, finer zoom steps, extra horizon tilt and cloud decks that thin out
+  as the camera passes them.
+- Destruction on tiles uses a planet-sized deferred decal (`M_TerrainDestruction`,
+  `terrain_decal.hlsl`) instead of replacing the tileset material. It converts each pixel
+  to longitude/latitude and samples ImpactMaskRT, CraterRT, FireMaskRT, TsunamiRT and
+  AshPlumeRT. Cesium drives its own layered material for imagery; a decal leaves it stock.
+- Everything is gated on tiles actually being loaded. Without the plugin or a token the
+  capture run is pixel-equivalent to Phase C (verified at 3840x2160, 26 shots).
+
+Unverified until a token is pasted, in the order worth checking:
+
+1. Tiles appear at all, at the right scale and centred on the planet.
+2. Longitude/latitude alignment against the orbital map (check one coastline during the fade).
+3. Tile brightness under the existing directional light (intensity 4) against the unlit globe.
+4. The decal lands on tiles and lines up with craters and scorch seen from orbit.
+5. Behaviour at the 30,000 ft floor: near-plane clipping, tilt, aiming.
+
+Known gaps: the tiles get no atmospheric haze of their own, crater relief on tiles is
+colour only, and Cesium logs a warning about "Enable World Bounds Checks".

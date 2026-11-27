@@ -40,6 +40,13 @@ public:
 	/** Outline and tint one nation (0 clears) for the Country Dossier. */
 	void SetHighlightedCountry(int32 CountryId);
 
+	/** Bind the live simulation render targets to another material, such as the terrain decal. */
+	void BindSimulationTextures(UMaterialInstanceDynamic* Material) const;
+	/** 1 draws the surface, 0 dissolves it completely onto streamed terrain beneath. */
+	void SetSurfaceFade(float Fade);
+	/** Fades each cloud deck as the camera nears it, and sizes the aim sphere to the visible ground. */
+	void SetCameraDistance(float Distance, float AimRadius);
+
 	/** Unit vector from the planet toward the Sun, in world space. */
 	FVector GetSunDirectionWorld() const;
 
@@ -176,6 +183,9 @@ private:
 	float AshActiveSeconds = 0.0f;
 	float EnvironmentAccumulator = 0.0f;
 	int32 AshReadIndex = 0;
+	float SurfaceFade = 1.0f;
+	float LowCloudProximity = 1.0f;
+	float HighCloudProximity = 1.0f;
 	int32 TsunamiReadIndex = 0;
 	int32 FireReadIndex = 0;
 	float TsunamiStepAccumulator = 0.0f;
