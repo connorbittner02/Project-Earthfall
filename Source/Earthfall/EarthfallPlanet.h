@@ -16,7 +16,7 @@ public:
     virtual void Tick(float DeltaSeconds) override;
 
     UFUNCTION(BlueprintCallable, Category="Earthfall|Impact")
-    void ApplyImpact(FVector WorldLocation, float Radius, float Energy);
+    void ApplyImpact(FVector WorldLocation, float Radius, float Energy, int32 WeaponIndex = 0);
 
     UFUNCTION(BlueprintCallable, Category="Earthfall|Planet")
     void ResetPlanet();
@@ -39,7 +39,10 @@ private:
     TArray<FVector> Normals;
     TArray<FVector2D> UVs;
     TArray<FLinearColor> VertexColors;
+    TArray<FLinearColor> BaseVertexColors;
+    TArray<float> HeatValues;
     TArray<FProcMeshTangent> Tangents;
+    float HeatUpdateAccumulator = 0.0f;
 
     void BuildPlanetMesh();
 };
