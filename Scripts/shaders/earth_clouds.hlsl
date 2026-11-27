@@ -37,10 +37,11 @@ float4 Main(float3 LocalPos, float3 Mask, float3 Ash, float3 Sun, float Time,
     float cloudAlpha = saturate(density * 1.15);
 
     // Soot rides above the weather and is lit the same way; fallout tints it.
-    float soot = saturate(Ash.r);
+    // A 0.7 power lifts thin plumes so 1x fallout reads clearly from orbit.
+    float soot = pow(saturate(Ash.r), 0.7);
     float fallout = saturate(Ash.g);
-    float sootAlpha = saturate(soot * 1.3) * 0.90 * Look.z;
-    float3 sootCol = float3(0.105, 0.082, 0.062) * (0.10 + 0.90 * day) * Look.w
+    float sootAlpha = saturate(soot * 1.6) * 0.92 * Look.z;
+    float3 sootCol = float3(0.150, 0.098, 0.060) * (0.10 + 0.90 * day) * Look.w
                    + float3(0.30, 0.55, 0.06) * fallout * 0.07;
 
     float alpha = sootAlpha + cloudAlpha * (1.0 - sootAlpha);
@@ -53,8 +54,8 @@ float4 Main(float3 LocalPos, float3 Mask, float3 Ash, float3 Sun, float Time,
 
     // The shock front itself glows even over clear sky.
     float ringGlow = ring * max(max(B0.w, B1.w), max(B2.w, B3.w));
-    col += float3(1.0, 0.90, 0.74) * ringGlow * 0.6;
-    alpha = max(alpha, ringGlow * 0.22 * (1.0 - cleared * 0.5));
+    col += float3(1.0, 0.90, 0.74) * ringGlow * 0.40;
+    alpha = max(alpha, ringGlow * 0.16 * (1.0 - cleared * 0.5));
 
     return float4(col, saturate(alpha * Look.x));
 }

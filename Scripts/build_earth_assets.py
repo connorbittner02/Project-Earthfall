@@ -374,6 +374,8 @@ def build_fx(name, mode, shape, two_sided):
         ("UV", node(material, unreal.MaterialExpressionTextureCoordinate, -900, 0), ""),
         ("VertexRGB", vertex_color, ""),
         ("VertexA", vertex_color, "A"),
+        ("LocalPos", local_position(material, 500), ""),
+        ("Time", node(material, unreal.MaterialExpressionTime, -900, 600), ""),
         ("Tint", vector_parameter(material, "Tint", (1.0, 0.6, 0.25, 4.0), 200), "RGBA"),
         ("Shape", vector_parameter(material, "Shape", shape, 300), "RGBA"),
         ("Mode", constant4(material, (float(mode), 0.0, 0.0, 0.0), 400), ""),
@@ -462,9 +464,9 @@ def main():
     build_sun("M_SunCorona", (1.0, 1.0, 0.0, 0.0), additive=True)
     build_moon()
     build_ash_advection(black)
-    build_fx("M_FXGlow", 0, (2.2, 0.8, 0.0, 0.0), two_sided=False)
+    build_fx("M_FXGlow", 0, (2.2, 0.8, 3.0, 0.0), two_sided=False)
     build_fx("M_FXTrail", 1, (1.6, 1.2, 0.0, 0.0), two_sided=True)
-    build_fx("M_FXRing", 2, (2.4, 1.5, 0.0, 0.0), two_sided=True)
+    build_fx("M_FXRing", 2, (3.0, 1.6, 0.0, 0.0), two_sided=True)
     build_projectile_body()
     build_niagara_templates()
     remove_obsolete_assets()

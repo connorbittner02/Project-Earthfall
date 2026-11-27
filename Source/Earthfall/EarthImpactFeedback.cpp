@@ -105,8 +105,9 @@ void AEarthImpactFeedback::InitFeedback(const FEarthfallImpactFX& InParams)
 	if (GlowMaterial)
 	{
 		FireballMID = UMaterialInstanceDynamic::Create(GlowMaterial, this);
-		FireballMID->SetVectorParameterValue(TEXT("Shape"), FLinearColor(3.6f, 0.25f, 0.0f, 0.0f));
+		FireballMID->SetVectorParameterValue(TEXT("Shape"), FLinearColor(2.2f, 0.30f, 3.2f, 1.0f));
 		CapMID = UMaterialInstanceDynamic::Create(GlowMaterial, this);
+		CapMID->SetVectorParameterValue(TEXT("Shape"), FLinearColor(2.2f, 0.0f, 2.4f, 1.0f));
 		Fireball->SetMaterial(0, FireballMID);
 		RisingCap->SetMaterial(0, CapMID);
 		Fireball->SetVisibility(true);
@@ -253,7 +254,7 @@ void AEarthImpactFeedback::UpdateShockRing()
 		return;
 	}
 
-	const float Width = 0.02f + Front * 0.14f;
+	const float Width = 0.012f + Front * 0.07f;
 	const float Trailing = FMath::Max(Front - Width, 0.0f);
 	FVector TangentA;
 	FVector TangentB;
@@ -289,6 +290,6 @@ void AEarthImpactFeedback::UpdateShockRing()
 	ShockRing->SetVisibility(true);
 
 	const FLinearColor Tone = bNuclear ? FLinearColor(1.0f, 0.90f, 0.76f) : FMath::Lerp(FLinearColor(1.0f, 0.92f, 0.80f), Accent, 0.45f);
-	const float Intensity = (bNuclear ? 2.4f : 1.6f) * Fade;
+	const float Intensity = (bNuclear ? 1.9f : 1.3f) * Fade;
 	RingMID->SetVectorParameterValue(TEXT("Tint"), FLinearColor(Tone.R, Tone.G, Tone.B, Intensity));
 }

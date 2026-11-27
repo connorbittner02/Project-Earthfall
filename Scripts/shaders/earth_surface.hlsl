@@ -23,7 +23,7 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
     float scorch = saturate((Mask.r - 0.25) / 0.60);
     float heat = saturate(Mask.g);
     float cleared = saturate(Mask.b);
-    float soot = saturate(Ash.r);
+    float soot = pow(saturate(Ash.r), 0.7);
     float fallout = saturate(Ash.g);
     float deposit = saturate(Ash.b);
 
@@ -56,9 +56,9 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
 
     // --- Albedo with destruction.
     float3 albedo = DayTex;
-    albedo = lerp(albedo, albedo * float3(0.40, 0.36, 0.33), deposit);
+    albedo = lerp(albedo, albedo * float3(0.42, 0.33, 0.26), pow(deposit, 0.7));
     albedo = lerp(albedo, float3(0.020, 0.017, 0.015), scorch * 0.94);
-    float airborne = 1.0 - 0.55 * soot;
+    float airborne = 1.0 - 0.70 * soot;
 
     float3 lit = albedo * (sunCol * NdL * terminator * cloudShadow * airborne
                            + float3(0.10, 0.16, 0.30) * 0.10 * day);

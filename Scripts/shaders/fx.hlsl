@@ -3,14 +3,21 @@
 //   1 = M_FXTrail  ribbon with a hot centreline (exhaust and re-entry trails, beams)
 //   2 = M_FXRing   shock band with a sharp leading edge and a soft wake
 // Vertex colour carries per-vertex fade (8-bit), so the HDR level lives in Tint.a.
-// Shape = (falloff exponent, hot-core boost, unused, unused).
-float3 Main(float3 NormalWS, float3 CamVec, float2 UV, float3 VertexRGB, float VertexA, float4 Tint, float4 Shape, float4 Mode)
+// Shape = (falloff exponent, hot-core boost, noise scale, turbulence 0..1).
+float3 Main(float3 NormalWS, float3 CamVec, float2 UV, float3 VertexRGB, float VertexA, float3 LocalPos, float Time, float4 Tint, float4 Shape, float4 Mode)
 {
     float3 colour = Tint.rgb * Tint.a;
     if (Mode.x < 0.5)
     {
         float mu = abs(dot(normalize(NormalWS), normalize(CamVec)));
-        return colour * (pow(mu, Shape.x) + pow(mu, Shape.x * 6.0) * Shape.y);
+        float edge = pow(mu, Shape.x);
+        // Scrolling 3D noise eats into the view-dot fade, so the rim dissolves into
+        // turbulent fire instead of ending on a clean silhouette.
+        float3 q = normalize(LocalPos) * Shape.z + float3(0.0, 0.0, -Time * 0.9);
+        float noise = saturate(Fbm(q, 4) * 1.6 - 0.25 + 0.35 * (VNoise(q * 3.7 + Time * 1.3) - 0.5));
+        float body = edge * lerp(1.0, 0.30 + 1.35 * noise, Shape.w);
+        body = max(body - Shape.w * 0.55 * (1.0 - noise) * (1.0 - edge), 0.0);
+        return colour * (body + pow(mu, Shape.x * 6.0) * Shape.y);
     }
 
     float3 faded = colour * VertexRGB * VertexA;
@@ -21,6 +28,8 @@ float3 Main(float3 NormalWS, float3 CamVec, float2 UV, float3 VertexRGB, float V
     }
 
     float v = saturate(UV.y);
-    float band = pow(v, Shape.x) * smoothstep(1.0, 0.90, v);
-    return faded * (band + pow(v, Shape.x * 5.0) * smoothstep(1.0, 0.94, v) * Shape.y);
+    // Pressure wave: a hard leading edge at v=1 and a long, thin trailing tail.
+    float lead = smoothstep(1.0, 0.975, v);
+    float tail = pow(v, Shape.x);
+    return faded * lead * (tail * 0.45 + pow(v, Shape.x * 8.0) * Shape.y);
 }

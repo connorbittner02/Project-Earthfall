@@ -33,18 +33,18 @@ struct FProjectileLook
 const FProjectileLook& LookFor(EEarthfallProjectile Style)
 {
 	static const FProjectileLook Looks[] = {
-		// Rod: thin tungsten needle.
-		{0.0042f, 0.0080f, 0.9f, 5.0f, 5.0f, FVector(0.005f, 0.005f, 0.060f), FLinearColor(0.20f, 0.20f, 0.23f), FLinearColor(0.9f, 0.35f, 0.08f)},
+		// Rod: thin gunmetal needle with a faintly glowing nose.
+		{0.0075f, 0.0034f, 1.1f, 8.0f, 3.0f, FVector(0.005f, 0.005f, 0.060f), FLinearColor(0.085f, 0.090f, 0.105f), FLinearColor(0.10f, 0.04f, 0.01f)},
 		// Beam: no hull, just the lance.
-		{0.0075f, 0.0140f, 0.75f, 9.0f, 8.0f, FVector(0.001f), FLinearColor::Black, FLinearColor::Black},
+		{0.0100f, 0.0100f, 0.75f, 11.0f, 6.0f, FVector(0.001f), FLinearColor::Black, FLinearColor::Black},
 		// Penetrator: heavy drilling warhead.
-		{0.0070f, 0.0110f, 1.4f, 5.5f, 6.0f, FVector(0.012f, 0.012f, 0.050f), FLinearColor(0.22f, 0.10f, 0.07f), FLinearColor(1.0f, 0.22f, 0.04f)},
+		{0.0110f, 0.0045f, 1.6f, 8.5f, 3.5f, FVector(0.012f, 0.012f, 0.050f), FLinearColor(0.090f, 0.075f, 0.070f), FLinearColor(0.10f, 0.03f, 0.01f)},
 		// Singularity: a dark core.
-		{0.0060f, 0.0150f, 1.6f, 4.0f, 7.0f, FVector(0.030f), FLinearColor(0.0f, 0.0f, 0.0f), FLinearColor(0.02f, 0.0f, 0.05f)},
+		{0.0095f, 0.0100f, 1.8f, 6.5f, 5.0f, FVector(0.030f), FLinearColor(0.0f, 0.0f, 0.0f), FLinearColor(0.01f, 0.0f, 0.03f)},
 		// Meteor: icy bolide with a long tail.
-		{0.0090f, 0.0130f, 2.2f, 5.0f, 6.0f, FVector(0.035f), FLinearColor(0.50f, 0.72f, 0.88f), FLinearColor(0.10f, 0.25f, 0.35f)},
-		// Missile: conical warhead on a bright exhaust plume.
-		{0.0080f, 0.0120f, 2.0f, 6.5f, 9.0f, FVector(0.014f, 0.014f, 0.070f), FLinearColor(0.78f, 0.80f, 0.84f), FLinearColor(0.15f, 0.12f, 0.10f)},
+		{0.0140f, 0.0060f, 2.4f, 8.0f, 3.5f, FVector(0.035f), FLinearColor(0.20f, 0.28f, 0.34f), FLinearColor(0.02f, 0.05f, 0.07f)},
+		// Missile: gunmetal warhead; the light comes from its exhaust, not the hull.
+		{0.0125f, 0.0042f, 2.2f, 10.0f, 4.0f, FVector(0.014f, 0.014f, 0.070f), FLinearColor(0.090f, 0.095f, 0.110f), FLinearColor(0.03f, 0.02f, 0.01f)},
 	};
 	return Looks[static_cast<int32>(Style)];
 }
@@ -143,7 +143,7 @@ void AEarthfallProjectile::Launch(AEarthfallPlanet* InPlanet, AEarthOrbitPawn* I
 	if (TrailMaterial)
 	{
 		TrailMID = UMaterialInstanceDynamic::Create(TrailMaterial, this);
-		TrailMID->SetVectorParameterValue(TEXT("Tint"), FLinearColor(1.0f, 1.0f, 1.0f, Look.TrailIntensity));
+		TrailMID->SetVectorParameterValue(TEXT("Tint"), FLinearColor(1.0f, 1.0f, 1.0f, Look.TrailIntensity * 0.32f));
 		BuildTrailTopology();
 		Trail->SetMaterial(0, TrailMID);
 	}
@@ -203,10 +203,17 @@ void AEarthfallProjectile::Tick(float DeltaSeconds)
 		if (Style != EEarthfallProjectile::Beam)
 		{
 			Hull->SetWorldRotation(FRotationMatrix::MakeFromZ(Heading).Rotator());
-			if (History.Num() >= TrailPoints) History.RemoveAt(0);
-			FTrailPoint& Point = History.AddDefaulted_GetRef();
-			Point.Position = Position;
-			Point.BirthAge = Age;
+			// Sample the path by time, not by frame: at several hundred fps a
+			// point per tick would squeeze the whole ribbon into a few centimetres.
+			const float SampleInterval = TrailSeconds / (TrailPoints - 2);
+			if (History.Num() < 2 || Age - History[History.Num() - 2].BirthAge >= SampleInterval)
+			{
+				if (History.Num() >= TrailPoints) History.RemoveAt(0);
+				History.AddDefaulted();
+			}
+			// The newest point always rides on the projectile itself.
+			History.Last().Position = Position;
+			History.Last().BirthAge = Age;
 
 			// Air friction: the head flares as it drops into the atmosphere.
 			const float Altitude = FVector::Dist(Position, PlanetCenter) - PlanetRadius;
@@ -214,6 +221,8 @@ void AEarthfallProjectile::Tick(float DeltaSeconds)
 			const FProjectileLook& Look = LookFor(Style);
 			const float Distance = FVector::Dist(Position, CameraLocation());
 			const float Radius = FMath::Clamp(Distance * Look.GlowRadius, 0.12f, 9.0f) * (1.0f + 1.3f * Reentry);
+			// The glow is the thruster: it sits at the tail so the hull stays readable.
+			HeadGlow->SetWorldLocation(Position - Heading * Look.HullScale.Z * 55.0f);
 			HeadGlow->SetWorldScale3D(FVector(Radius / EngineShapeRadius));
 			if (GlowMID)
 			{
@@ -310,7 +319,10 @@ void AEarthfallProjectile::UpdateTrail()
 		const float HalfWidth = 0.5f * FMath::Clamp(Distance * Look.TrailWidth, 0.05f, 5.0f)
 			* (bBeam ? Pulse : (0.25f + 0.75f * Fade)) * (1.0f + 0.9f * Reentry);
 
-		const FLinearColor Tone = FMath::Lerp(Accent, FLinearColor(1.0f, 0.86f, 0.62f), FMath::Max(Fade * Fade * 0.6f, Reentry * 0.8f));
+		// Hot orange at the engine cooling to cyan down the tail, tinted by the weapon.
+		const FLinearColor Cool = FMath::Lerp(FLinearColor(0.20f, 0.72f, 1.0f), Accent, 0.35f);
+		const FLinearColor Tone = bBeam ? FMath::Lerp(Accent, FLinearColor::White, 0.35f)
+			: FMath::Lerp(Cool, FLinearColor(1.0f, 0.62f, 0.22f), FMath::Max(Fade * Fade, Reentry * 0.8f));
 		const float Alpha = Index > Last ? 0.0f : Fade * Fade * (0.55f + 0.45f * Reentry) * Pulse;
 		const float U = static_cast<float>(Index) / (TrailPoints - 1);
 		Vertices[Index * 2] = Position - Side * HalfWidth;
