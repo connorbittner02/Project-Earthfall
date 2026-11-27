@@ -33,7 +33,7 @@ AEarthOrbitPawn* AEarthfallCaptureDirector::Pawn() const
 void AEarthfallCaptureDirector::At(float Time, TFunction<void()> Action)
 {
 	FStep& Step = Steps.AddDefaulted_GetRef();
-	Step.Time = Time;
+	Step.Time = Time + TimeOffset;
 	Step.Action = MoveTemp(Action);
 }
 
@@ -67,6 +67,18 @@ void AEarthfallCaptureDirector::BuildScript()
 	// The shot list assumes -EarthfallSunLon=-60 -EarthfallSunLat=10: the Americas
 	// in daylight, Asia in darkness and the terminator over Africa and Europe.
 	At(0.0f, [this]() { if (AEarthOrbitPawn* P = Pawn()) P->SetAimEnabled(false); });
+	// Lowest orbit first, HUD off, while the planet is still untouched: desert
+	// relief, sunglint on open ocean, city lights at night, and a mid descent.
+	At(0.0f, [=, this]() { if (AEarthOrbitPawn* P = Pawn()) P->SetHudMode(EEarthfallHudMode::Hidden); View(-112.0f, 27.0f, 103.5f); });
+	At(2.0f, [this]() { Shot(TEXT("22-low-orbit-desert-coast")); });
+	At(2.1f, [=]() { View(-35.0f, -45.0f, 103.5f); });
+	At(3.5f, [this]() { Shot(TEXT("23-low-orbit-ocean")); });
+	At(3.6f, [=]() { View(119.0f, 27.0f, 103.5f); });
+	At(5.0f, [this]() { Shot(TEXT("24-low-orbit-night-cities")); });
+	At(5.1f, [=]() { View(-112.0f, 27.0f, 112.0f); });
+	At(6.5f, [this]() { Shot(TEXT("25-mid-descent")); });
+	At(6.6f, [this]() { if (AEarthOrbitPawn* P = Pawn()) P->SetHudMode(EEarthfallHudMode::Full); });
+	TimeOffset = 6.7f;
 	At(0.0f, [=]() { View(-85.0f, 22.0f, 420.0f); });
 	At(2.5f, [this]() { Shot(TEXT("01-earth-day")); });
 

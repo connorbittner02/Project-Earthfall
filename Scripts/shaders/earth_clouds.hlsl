@@ -2,7 +2,7 @@
 // exactly 0 opacity, so the layer can never film the oceans. Layer = (seed,
 // threshold, zonal stretch, drift). Look = (opacity scale, self-shadow strength,
 // ash visibility, sun intensity).
-float4 Main(float3 LocalPos, float2 UV, float3 Mask, Texture2D AshTex, SamplerState AshTexSampler, float3 Sun, float Time,
+float4 Main(float3 LocalPos, float3 ViewLocal, float CamDist, float2 UV, float3 Mask, Texture2D AshTex, SamplerState AshTexSampler, float3 Sun, float Time,
             float4 Layer, float4 Look,
             float4 A0, float4 B0, float4 C0, float4 A1, float4 B1, float4 C1,
             float4 A2, float4 B2, float4 C2, float4 A3, float4 B3, float4 C3)
@@ -22,9 +22,20 @@ float4 Main(float3 LocalPos, float2 UV, float3 Mask, Texture2D AshTex, SamplerSt
     float density = CloudField(ns, Time, Layer, 6);
     // High-frequency wispy erosion: thin cloud is eaten away first, so decks
     // fray into filaments instead of ending on a solid white edge.
-    float3 wp = ns * 46.0 + float3(Time * 0.012, 0.0, Time * 0.007);
+    // Value noise shows its lattice as straight creases up close, so the detail
+    // lookups are bent through a slow vector warp first.
+    float3 warp = float3(VNoise(ns * 17.0), VNoise(ns * 17.0 + 31.0), VNoise(ns * 17.0 + 57.0)) - 0.5;
+    float3 wp = ns * 46.0 + warp * 1.6 + float3(Time * 0.012, 0.0, Time * 0.007);
     float wisps = Fbm(wp, 3) * 0.7 + Fbm(wp * 3.1 + 5.0, 2) * 0.3;
     density = saturate(density - smoothstep(0.30, 0.62, wisps) * (1.0 - density * 0.55) * 0.60);
+    // Low orbit: a finer erosion octave keeps cloud edges crisp when the camera
+    // skims the deck.
+    float nearDetail = 1.0 - smoothstep(4.0, 40.0, CamDist);
+    [branch] if (nearDetail > 0.001)
+    {
+        float fine = Fbm(ns * 420.0 + warp * 9.0 + (wisps - 0.5) * 3.0 + float3(Time * 0.02, 0.0, 0.0), 3);
+        density = saturate(density - smoothstep(0.35, 0.75, fine) * (1.0 - density * 0.6) * 0.45 * nearDetail);
+    }
     density = saturate(density + ring * 0.28) * (1.0 - cleared);
 
     // Volumetric-style relief: march one step toward the sun through the same
@@ -87,5 +98,8 @@ float4 Main(float3 LocalPos, float2 UV, float3 Mask, Texture2D AshTex, SamplerSt
     col += float3(1.0, 0.90, 0.74) * ringGlow * 0.40;
     alpha = max(alpha, ringGlow * 0.16 * (1.0 - cleared * 0.5));
 
+    // The shell is a faceted mesh: fade it out over the last few degrees before
+    // its own horizon, where the facets would otherwise show as slivers.
+    alpha *= smoothstep(0.03, 0.18, dot(n, normalize(ViewLocal)));
     return float4(col, saturate(alpha * Look.x));
 }

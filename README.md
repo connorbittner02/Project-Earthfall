@@ -33,18 +33,25 @@ An Unreal Engine 5.8 C++ prototype for an Earth-scale destruction sandbox. Self-
 
 City locations, population distribution and all casualty, climate, grid and fallout telemetry are synthetic gameplay estimates, not forecasts. The relief normal map is derived from NASA's shaded-relief image and is a visual proxy, not survey-grade elevation.
 
+**Low orbit**
+
+- Minimum orbit is 1.035 R, above the cloud decks. Zoom eases in log-altitude, drag speed scales with altitude, and below 0.22 R of altitude the camera pitches up to a horizon view.
+- Distance-faded procedural detail: micro-terrain normals, mottled ground, forest canopy, city blocks, point city lights, extra ocean wave trains in the sunglint, and finer cloud erosion. The atmosphere shell is two-sided so the limb survives the camera entering it.
+
 ## Controls
 
 | Input | Action |
 | --- | --- |
 | RMB drag | Orbit |
-| Mouse wheel | Zoom |
+| Mouse wheel | Zoom, eased, down to 1.035 planet radii; the camera tilts to the horizon in low orbit |
 | LMB | Launch the selected weapon at the cursor |
 | 1-6 | Select weapon (or click a row in the Arsenal panel) |
 | Q / E | Yield multiplier down / up |
 | A / D | Blast radius multiplier down / up |
 | Z / C | Fallout multiplier down / up |
 | R | Reset the planet and the simulation |
+| H | Cycle HUD: full, ticker only, hidden (or click the eye button) |
+| Tab / MMB | Inspect mode: click a nation for its Country Dossier |
 
 ## Build
 
@@ -68,7 +75,7 @@ Then open `Earthfall.uproject` and press Play, or run the uncooked game directly
 
 Use a real window for anything you intend to measure. `-RenderOffscreen` is handy for a quick headless smoke test, but it ignores `-ResX`/`-ResY` and renders at roughly 888x500, so its frame rate and sharpness say nothing about 4K. `-fullscreen` follows the primary display's mode and is vsync-capped.
 
-Measured on an RTX 4080 at native 3840x2160, TSR at 100% screen percentage, vsync off, across the whole scripted run including every strike: about 81 fps average. The cloud shells are the dominant cost. `Media/Capture/` holds the 888x500 smoke-test set and `Media/Capture4K/` holds native 4K frames.
+Measured on an RTX 4080 at native 3840x2160, TSR at 100% screen percentage, vsync off, across the whole scripted run including every strike: about 68 fps average after the tsunami, wildfire, crater and low-orbit passes. The cloud shells are the dominant cost. `Media/Capture/` holds the 888x500 smoke-test set and `Media/Capture4K/` holds native 4K frames.
 
 ## Asset pipeline
 
@@ -104,6 +111,7 @@ NASA imagery is public-domain; the ESO panorama is licensed CC BY 4.0 and must k
 
 ## Known limitations
 
+- Low orbit is procedural detail over 8K maps (about 5 km per texel), not streamed terrain. Cesium for Unreal 2.31.0 was verified to compile and load on UE 5.8 but needs a Cesium ion token to stream anything; see `docs/30k-ft-cesium-plan.md` for the test results, manual install steps and integration design.
 - Cloud, ash and shockwave effects are shader models on thin shells, not volumetric or fluid simulations.
 - Impact-mask and ash stamps are drawn in equirectangular space, so footprints distort near the poles.
 - Plasma trenches, steam, seismic propagation and debris gravity are represented by visual feedback and telemetry rather than coupled physics.

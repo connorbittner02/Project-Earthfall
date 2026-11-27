@@ -2,10 +2,17 @@
 // derived from the view ray's closest approach to the planet centre, not from the
 // mesh normal, so the limb stays a crisp analytic curve at any tessellation.
 // Shape = (planet radius, shell radius, intensity, atmosphere health 0..1).
+// The material is two-sided so the limb survives the camera dropping inside the
+// shell in low orbit: from outside only the near faces draw, from inside the far.
 float3 Main(float3 LocalPos, float3 CamLocal, float3 Sun, float4 Shape)
 {
     float3 ray = normalize(LocalPos - CamLocal);
-    float along = dot(-CamLocal, ray);
+    // On a sphere a fragment faces the camera exactly when the ray is entering.
+    bool cameraOutside = length(CamLocal) > Shape.y;
+    bool farFace = dot(LocalPos, ray) > 0.0;
+    if (cameraOutside && farFace) return float3(0.0, 0.0, 0.0);
+    // A ray climbing away from the planet is closest to it at the camera.
+    float along = max(dot(-CamLocal, ray), 0.0);
     float3 closest = CamLocal + ray * along;
     float impact = length(closest);
     float3 limbDir = closest / max(impact, 1e-3);

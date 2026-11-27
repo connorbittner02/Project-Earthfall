@@ -112,6 +112,10 @@ private:
 	float Yaw = 0.0f;
 	float Pitch = 10.0f;
 	float Distance = 475.0f;
+	/** Where input wants the camera; Yaw, Pitch and Distance ease toward these. */
+	float GoalYaw = 0.0f;
+	float GoalPitch = 10.0f;
+	float GoalDistance = 475.0f;
 	FVector2D PendingOrbit = FVector2D::ZeroVector;
 	FHitResult AimHit;
 	bool bIsOrbiting = false;

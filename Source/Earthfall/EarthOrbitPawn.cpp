@@ -17,7 +17,12 @@
 
 namespace
 {
-constexpr float MinOrbitDistanceScale = 1.06f;
+/** Lowest orbit: 3.5% of the radius up, above the high cloud deck at 2%. */
+constexpr float MinOrbitDistanceScale = 1.035f;
+/** Below this altitude (as a fraction of the radius) the camera starts to pitch up toward the horizon. */
+constexpr float LowOrbitTiltStart = 0.22f;
+/** Pitch at the lowest orbit: puts the limb about a third of the way down the frame. */
+constexpr float LowOrbitTiltDegrees = 70.0f;
 constexpr float MaxOrbitDistance = 1200.0f;
 constexpr float DefaultOrbitDistance = 475.0f;
 /** The preview ring rides above the high cloud deck so weather never hides it. */
@@ -61,6 +66,9 @@ void AEarthOrbitPawn::BeginPlay()
 	Yaw = SunRotation.Yaw + 32.0f;
 	Pitch = FMath::Clamp(SunRotation.Pitch + 12.0f, -80.0f, 80.0f);
 	Distance = DefaultOrbitDistance;
+	GoalYaw = Yaw;
+	GoalPitch = Pitch;
+	GoalDistance = Distance;
 	BuildTargetPreviewRing();
 
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
@@ -89,13 +97,33 @@ void AEarthOrbitPawn::Tick(float DeltaSeconds)
 		if (!PC || !PC->IsInputKeyDown(EKeys::RightMouseButton) || !bMouseInViewport || !bApplicationActive) EndOrbit();
 	}
 
-	Yaw += PendingOrbit.X;
-	Pitch = FMath::Clamp(Pitch + PendingOrbit.Y, -80.0f, 80.0f);
+	// Drag speed follows altitude, so the ground slides under the cursor at the
+	// same screen rate from high orbit down to the cloud tops.
+	const AEarthfallPlanet* OrbitPlanet = FindPlanet();
+	const float OrbitRadius = OrbitPlanet ? OrbitPlanet->PlanetRadius : 100.0f;
+	const float AltitudeRatio = FMath::Clamp((Distance - OrbitRadius) / (DefaultOrbitDistance - OrbitRadius), 0.009f, 1.6f);
+	GoalYaw += PendingOrbit.X * AltitudeRatio;
+	GoalPitch = FMath::Clamp(GoalPitch + PendingOrbit.Y * AltitudeRatio, -80.0f, 80.0f);
 	PendingOrbit = FVector2D::ZeroVector;
+
+	// Critically damped easing toward the goals. Zoom eases in log-altitude, so
+	// a descent decelerates smoothly instead of slamming into the minimum orbit.
+	const float OrbitAlpha = 1.0f - FMath::Exp(-DeltaSeconds * 12.0f);
+	Yaw += (GoalYaw - Yaw) * OrbitAlpha;
+	Pitch += (GoalPitch - Pitch) * OrbitAlpha;
+	const float ZoomAlpha = 1.0f - FMath::Exp(-DeltaSeconds * 7.0f);
+	const float Altitude = FMath::Max(Distance - OrbitRadius, 0.01f);
+	const float GoalAltitude = FMath::Max(GoalDistance - OrbitRadius, 0.01f);
+	Distance = OrbitRadius + Altitude * FMath::Pow(GoalAltitude / Altitude, ZoomAlpha);
 
 	// The camera sits at (Yaw, Pitch) over the planet and looks at its centre.
 	FVector CameraLocation = FRotator(Pitch, Yaw, 0.0f).Vector() * Distance;
 	FRotator CameraRotation = (-CameraLocation).Rotation();
+	// In low orbit the camera pitches up from straight down toward the northern
+	// horizon, so a descent ends looking across the terrain at the limb.
+	const float AltitudeFraction = (Distance - OrbitRadius) / OrbitRadius;
+	const float Tilt = LowOrbitTiltDegrees * (1.0f - FMath::SmoothStep(MinOrbitDistanceScale - 1.0f, LowOrbitTiltStart, AltitudeFraction));
+	CameraRotation = (CameraRotation.Quaternion() * FRotator(Tilt, 0.0f, 0.0f).Quaternion()).Rotator();
 
 	ShakeTimeRemaining = FMath::Max(0.0f, ShakeTimeRemaining - DeltaSeconds);
 	ShakePhase += DeltaSeconds;
@@ -171,9 +199,11 @@ void AEarthOrbitPawn::ZoomInput(float Value)
 {
 	const AEarthfallPlanet* Planet = FindPlanet();
 	const float Radius = Planet ? Planet->PlanetRadius : 100.0f;
-	const float Altitude = FMath::Max(0.0f, Distance - Radius);
-	const float ZoomStep = FMath::Clamp(Altitude * 0.11f, 0.65f, 24.0f);
-	Distance = FMath::Clamp(Distance - Value * ZoomStep, Radius * MinOrbitDistanceScale, MaxOrbitDistance);
+	if (Value == 0.0f) return;
+	// Each wheel notch covers a fixed share of the remaining altitude.
+	const float Altitude = FMath::Max(0.0f, GoalDistance - Radius);
+	const float ZoomStep = FMath::Clamp(Altitude * 0.13f, 0.10f, 24.0f);
+	GoalDistance = FMath::Clamp(GoalDistance - Value * ZoomStep, Radius * MinOrbitDistanceScale, MaxOrbitDistance);
 }
 
 void AEarthOrbitPawn::SetOrbitView(float LongitudeDegrees, float LatitudeDegrees, float InDistance)
@@ -184,6 +214,10 @@ void AEarthOrbitPawn::SetOrbitView(float LongitudeDegrees, float LatitudeDegrees
 	Yaw = -LongitudeDegrees;
 	Pitch = FMath::Clamp(LatitudeDegrees, -80.0f, 80.0f);
 	Distance = FMath::Clamp(InDistance, Radius * MinOrbitDistanceScale, MaxOrbitDistance);
+	// A scripted view is a cut, not a move.
+	GoalYaw = Yaw;
+	GoalPitch = Pitch;
+	GoalDistance = Distance;
 }
 
 AEarthfallPlanet* AEarthOrbitPawn::FindPlanet() const

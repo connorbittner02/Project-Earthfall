@@ -58,6 +58,40 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
     float3 waterN = normalize(Ng + (east * swellA + north * swellB) * 0.030);
     float3 N = normalize(lerp(reliefN, waterN, water));
 
+    // --- Low-orbit detail. The 8K maps run out near 5 km per texel, so as the
+    // camera comes down procedural detail fades in over them. It fades out again
+    // toward the horizon, where a pixel covers too much ground to resolve it.
+    float nearDetail = (1.0 - smoothstep(6.0, 48.0, CamDist)) * saturate(dot(n, V) * 4.0);
+    float landDetail = 0.5;
+    float canopy = 0.0;
+    float blocks = 0.5;
+    // City lights resolve into points over a longer range than the ground detail.
+    float nearCity = 1.0 - smoothstep(6.0, 60.0, CamDist);
+    float sparkle = Hash13(floor(n * 14000.0));
+    [branch] if (nearDetail > 0.001)
+    {
+        // Micro-terrain: the finite-difference gradient of an fbm, steeper where
+        // the NASA relief says the ground is already rugged.
+        // Bent through a slow warp so the noise lattice never shows as creases.
+        float3 dp = n * 1100.0 + (float3(VNoise(n * 260.0), VNoise(n * 260.0 + 31.0), VNoise(n * 260.0 + 57.0)) - 0.5) * 2.4;
+        float h0 = Fbm(dp, 3);
+        float hE = Fbm(dp + east * 0.35, 3);
+        float hN = Fbm(dp + north * 0.35, 3);
+        landDetail = h0;
+        float rugged = saturate(length(NormalTex.xy) * 6.0);
+        float3 microTilt = clamp((east * (h0 - hE) + north * (h0 - hN)) / 0.35, -0.5, 0.5);
+        N = normalize(N + microTilt * (0.10 + 0.35 * rugged) * nearDetail * (1.0 - water) * (1.0 - 0.6 * ice) * (1.0 - scorch));
+        // Forest canopy clumps and irregular city blocks.
+        canopy = saturate((VNoise(n * 5200.0) * 0.6 + VNoise(n * 13000.0) * 0.4 - 0.35) * 2.2);
+        blocks = Hash13(floor(n * 7000.0));
+        // Ocean: three finer wave trains under the orbital swell.
+        float waveA = VNoise(n * 1400.0 + float3(Time * 0.35, 0.0, 0.0)) - 0.5;
+        float waveB = VNoise(n * 3800.0 - float3(0.0, Time * 0.60, 0.0)) - 0.5;
+        float waveC = VNoise(n * 9000.0 + float3(0.0, 0.0, Time * 0.90)) - 0.5;
+        float waveD = VNoise(n * 9000.0 + float3(31.7, Time * 0.90, 0.0)) - 0.5;
+        N = normalize(N + (east * (waveA + 0.6 * waveC) + north * (waveB + 0.6 * waveD)) * 0.10 * nearDetail * water);
+    }
+
     // --- Sun. The terminator is softened by the atmosphere and the low sun is
     // reddened by its long slant path.
     float NdLs = dot(n, Sun);
@@ -99,6 +133,14 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
 
     // --- Albedo with destruction.
     float3 albedo = DayTex;
+    // Low-orbit ground texture: mottled soil and rock, darker clumped canopy
+    // over vegetation, and grey block structure where the night map says city.
+    float greenness = saturate((DayTex.g - max(DayTex.r, DayTex.b) * 0.80) * 9.0);
+    float urban = saturate((dot(NightTex, float3(0.4, 0.4, 0.2)) - 0.12) * 3.0) * (1.0 - water);
+    float landNear = nearDetail * (1.0 - water) * (1.0 - ice);
+    albedo *= 1.0 + (landDetail - 0.5) * 0.55 * landNear;
+    albedo = lerp(albedo, albedo * float3(0.62, 0.80, 0.58), canopy * greenness * landNear * 0.7);
+    albedo = lerp(albedo, float3(0.36, 0.35, 0.34) * (0.8 + 0.4 * blocks), urban * landNear * 0.40);
     // Wildfire scars: charred basalt and ash where the front has passed.
     albedo = lerp(albedo, float3(0.035, 0.030, 0.028), saturate(Fire.g * 0.92) * (1.0 - water));
     // Tsunami run-up leaves the shore dark and wet.
@@ -161,7 +203,9 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
     // --- Night side: city lights only, dead under scorch and EMP.
     float night = 1.0 - smoothstep(-0.20, 0.04, NdLs);
     // Sodium-vapour gold, as city webs look from the ISS.
-    float3 emissive = NightTex * float3(1.0, 0.78, 0.45) * 1.30 * night * (1.0 - blackout) * Tuning.y * (1.0 - 0.7 * soot);
+    // Up close the glow breaks into individual blocks of light.
+    float cityDetail = lerp(1.0, (0.08 + 4.5 * pow(sparkle, 5.0)) * 0.6, nearCity);
+    float3 emissive = NightTex * cityDetail * float3(1.0, 0.78, 0.45) * 1.30 * night * (1.0 - blackout) * Tuning.y * (1.0 - 0.7 * soot);
 
     // --- Magma: ridged-noise veins that narrow and dim as the crater cools.
     // Warp the lookup so the veins meander instead of following the noise lattice.

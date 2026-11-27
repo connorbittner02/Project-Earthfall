@@ -299,8 +299,13 @@ def build_clouds(black):
     material.set_editor_property("blend_mode", unreal.BlendMode.BLEND_TRANSLUCENT)
     material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
     color = unreal.MaterialSamplerType.SAMPLERTYPE_COLOR
+    camera_distance = node(material, unreal.MaterialExpressionDistance, -1100, -800)
+    connect(node(material, unreal.MaterialExpressionCameraPositionWS, -1300, -840), "", camera_distance, "A")
+    connect(node(material, unreal.MaterialExpressionWorldPosition, -1300, -760), "", camera_distance, "B")
     inputs = [
         ("LocalPos", local_position(material, -600), ""),
+        ("ViewLocal", local_vector(material, unreal.MaterialExpressionCameraVectorWS, -700), ""),
+        ("CamDist", camera_distance, ""),
         ("UV", node(material, unreal.MaterialExpressionTextureCoordinate, -900, -500), ""),
         ("Mask", texture_sample(material, "ImpactMaskRT", black, color, -400), "RGB"),
         ("AshTex", texture_object(material, "AshPlumeRT", black, -200), ""),
@@ -318,6 +323,7 @@ def build_clouds(black):
 def build_atmosphere():
     material = create_material(MATERIAL_DIR, "M_EarthAtmosphere")
     material.set_editor_property("blend_mode", unreal.BlendMode.BLEND_ADDITIVE)
+    material.set_editor_property("two_sided", True)
     material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
     inputs = [
         ("LocalPos", local_position(material, -200), ""),

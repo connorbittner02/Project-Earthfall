@@ -39,6 +39,8 @@ private:
 	float WarmupSeconds = 0.0f;
 	float QuietSeconds = 0.0f;
 	float ScriptSeconds = 0.0f;
+	/** Added to every step scheduled after it is set. */
+	float TimeOffset = 0.0f;
 	float NextProgressLog = 0.0f;
 	double FrameSecondsTotal = 0.0;
 	double WorstFrameSeconds = 0.0;
