@@ -357,6 +357,8 @@ def build_terrain_decal(black, night, masks):
             ("Sun", vector_parameter(material, "SunDirection", (1.0, 0.0, 0.0, 0.0), y + 700), "RGB"),
             ("Time", node(material, unreal.MaterialExpressionTime, -900, y + 720), ""),
             ("Terrain", vector_parameter(material, "Terrain", (0.0, 0.0, 0.0, 0.0), y + 780), "RGBA"),
+            ("Atmos", vector_parameter(material, "Atmosphere", (1.0, 1.0, 0.0, 0.0), y + 820), "RGBA"),
+            ("Column", vector_parameter(material, "Column", (1.0, 0.0, 0.0, 0.0), y + 860), "RGBA"),
             ("Mode", constant, ""),
         ], unreal.CustomMaterialOutputType.CMOT_FLOAT4)
 
@@ -442,7 +444,7 @@ def build_ash_advection(black):
     finish_material(material, MATERIAL_DIR, "M_AshAdvection")
 
 
-def build_step(name, shader_file, inputs):
+def build_step(name, shader_file, inputs, vectors=()):
     """A simulation step drawn to a render target: UV in, new state out."""
     material = create_material(MATERIAL_DIR, name)
     material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
@@ -452,13 +454,18 @@ def build_step(name, shader_file, inputs):
         graph.append((input_name, texture_object(material, parameter_name, texture, y), ""))
         y += 100
     graph.append(("Step", vector_parameter(material, "Step", (0.016, 0.16, 1.0 / 1024.0, 1.0 / 512.0), y), "RGBA"))
+    for vector_name, default in vectors:
+        y += 100
+        graph.append((vector_name, vector_parameter(material, vector_name, default, y), "RGBA"))
     shading = custom(material, shader_file, graph, unreal.CustomMaterialOutputType.CMOT_FLOAT3)
     output(shading, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
     finish_material(material, MATERIAL_DIR, name)
 
 
-def build_fx(name, mode, shape, two_sided):
+def build_fx(name, mode, shape, two_sided, instanced=False):
     material = create_material(FX_MATERIAL_DIR, name)
+    if instanced:
+        material.set_editor_property("used_with_instanced_static_meshes", True)
     material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
     material.set_editor_property("blend_mode", unreal.BlendMode.BLEND_ADDITIVE)
     material.set_editor_property("two_sided", two_sided)
@@ -478,6 +485,26 @@ def build_fx(name, mode, shape, two_sided):
     shading = custom(material, "fx.hlsl", inputs, unreal.CustomMaterialOutputType.CMOT_FLOAT3)
     output(shading, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
     finish_material(material, FX_MATERIAL_DIR, name)
+
+
+def build_fx_volume():
+    """Translucent billowing volume for ash columns, steam and splash crowns."""
+    material = create_material(FX_MATERIAL_DIR, "M_FXVolume")
+    material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
+    material.set_editor_property("blend_mode", unreal.BlendMode.BLEND_TRANSLUCENT)
+    inputs = [
+        ("NormalWS", node(material, unreal.MaterialExpressionVertexNormalWS, -900, -200), ""),
+        ("CamVec", node(material, unreal.MaterialExpressionCameraVectorWS, -900, -100), ""),
+        ("LocalPos", local_position(material, 500), ""),
+        ("Sun", vector_parameter(material, "SunDirection", (1.0, 0.0, 0.0, 0.0), 100), "RGB"),
+        ("Time", node(material, unreal.MaterialExpressionTime, -900, 600), ""),
+        ("Tint", vector_parameter(material, "Tint", (0.1, 0.09, 0.08, 1.0), 200), "RGBA"),
+        ("Shape", vector_parameter(material, "Shape", (1.2, 1.0, 4.0, 0.3), 300), "RGBA"),
+    ]
+    shading = custom(material, "fx_volume.hlsl", inputs, unreal.CustomMaterialOutputType.CMOT_FLOAT4)
+    output(mask(material, shading, "rgb"), "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    output(mask(material, shading, "a"), "", unreal.MaterialProperty.MP_OPACITY)
+    finish_material(material, FX_MATERIAL_DIR, "M_FXVolume")
 
 
 def build_projectile_body():
@@ -566,9 +593,12 @@ def main():
     build_sun("M_SunCorona", (1.0, 1.0, 0.0, 0.0), additive=True)
     build_moon()
     build_ash_advection(black)
-    build_step("M_TsunamiStep", "tsunami_step.hlsl", [("WaveTex", "WaveSource", black), ("MasksTex", "MasksTexture", masks)])
+    build_step("M_TsunamiStep", "tsunami_step.hlsl", [("WaveTex", "WaveSource", black), ("MasksTex", "MasksTexture", masks)],
+               vectors=[("Flood", (0.90, 4.0, 0.0, 0.0))])
     build_step("M_FireStep", "fire_step.hlsl", [("FireTex", "FireSource", black), ("MasksTex", "MasksTexture", masks), ("DayTex", "DayTexture", day)])
     build_fx("M_FXGlow", 0, (2.2, 0.8, 3.0, 0.0), two_sided=False)
+    build_fx("M_FXEjecta", 0, (1.6, 1.2, 2.0, 0.0), two_sided=False, instanced=True)
+    build_fx_volume()
     build_fx("M_FXTrail", 1, (1.6, 1.2, 0.0, 0.0), two_sided=True)
     build_fx("M_FXRing", 2, (3.0, 1.6, 0.0, 0.0), two_sided=True)
     build_projectile_body()

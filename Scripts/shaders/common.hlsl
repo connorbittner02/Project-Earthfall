@@ -104,6 +104,26 @@ float3 ShockFlash(float3 n, float4 A, float4 B, float4 C)
     return C.rgb * (B.y * horizon / (1.0 + dist2 / (radius * radius)));
 }
 
+// Soft shadow of an ash or steam column standing at A.xyz and C.w planet radii
+// tall. Worked in the tangent plane at the column's base: the shadow runs
+// down-sun for height / tan(sun elevation) and widens toward the cap.
+float ColumnShadow(float3 n, float3 Sun, float4 A, float4 C)
+{
+    float3 c = A.xyz;
+    float sunUp = dot(Sun, c);
+    float3 sunFlat = Sun - c * sunUp;
+    float sunFlatLen = length(sunFlat);
+    if (C.w <= 0.0005 || sunUp <= 0.02 || sunFlatLen < 1e-3) return 0.0;
+    sunFlat /= sunFlatLen;
+    float3 d = n - c * dot(n, c);
+    float along = dot(d, -sunFlat);
+    float across = length(d + sunFlat * along);
+    float reach = min(C.w * sunFlatLen / max(sunUp, 0.12), 0.9);
+    float width = 0.010 + 0.55 * C.w * saturate(along / max(reach, 1e-3));
+    return smoothstep(0.0, 0.012, along) * (1.0 - smoothstep(reach * 0.65, reach, along))
+         * (1.0 - smoothstep(width * 0.45, width, across)) * saturate(dot(n, c) * 6.0 - 4.0);
+}
+
 // ---------------------------------------------------------------------------
 // Procedural weather. n is a unit planet-local direction; the result is cloud
 // density 0..1 with exactly 0 in clear sky. Layer = (seed, threshold, zonal

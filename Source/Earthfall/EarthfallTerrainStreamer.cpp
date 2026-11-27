@@ -232,7 +232,7 @@ void AEarthfallTerrainStreamer::Tick(float DeltaSeconds)
 	}
 	if (BackdropMID)
 	{
-		const float Depth = 1.0f - FMath::SmoothStep(0.3f, 2.0f, Distance - Radius * TerrainRadiusScale);
+		const float Depth = 1.0f - FMath::SmoothStep(0.3f, 5.0f, Distance - Radius * TerrainRadiusScale);
 		const float Stars = 1.0f - 0.97f * Depth * Daylight;
 		// Tuning = (panorama gain, star gain, black floor, unused), as built in build_earth_assets.py.
 		BackdropMID->SetVectorParameterValue(TEXT("Tuning"), FLinearColor(2.3f * Stars, 0.62f * Stars, 0.075f, 0.0f));
@@ -248,6 +248,9 @@ void AEarthfallTerrainStreamer::Tick(float DeltaSeconds)
 		DestructionMID->SetVectorParameterValue(TEXT("CameraPos"), FLinearColor(Local.X, Local.Y, Local.Z, 0.0f));
 		const FVector SunLocal = Planet->GetActorTransform().InverseTransformVectorNoScale(Planet->GetSunDirectionWorld());
 		DestructionMID->SetVectorParameterValue(TEXT("SunDirection"), FLinearColor(SunLocal.X, SunLocal.Y, SunLocal.Z, 0.0f));
+		const FVector2D Atmosphere = Planet->GetAtmosphereState();
+		DestructionMID->SetVectorParameterValue(TEXT("Atmosphere"), FLinearColor(Atmosphere.X, Atmosphere.Y, 0.0f, 0.0f));
+		DestructionMID->SetVectorParameterValue(TEXT("Column"), Planet->GetColumnShadowParams());
 		DestructionMID->SetVectorParameterValue(TEXT("Terrain"), FLinearColor(CrossFade, 0.0f, 0.0f, 0.0f));
 	}
 }

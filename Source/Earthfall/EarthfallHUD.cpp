@@ -322,9 +322,22 @@ void AEarthfallHUD::DrawMultiplierPanel(const AEarthOrbitPawn* Pawn, float Scree
 	const double RadiusKm = Pawn->GetCurrentBlastRadius() / 100.0 * EarthRadiusKm;
 	Text(TEXT("BLAST ZONE"), X + Px(14.0f), SummaryY, 11.0f, Dim);
 	Text(FString::Printf(TEXT("%.0f km"), RadiusKm), X + Width - Px(14.0f), SummaryY - Px(1.0f), 13.0f, Spec.Color, EFace::Mono, EAlign::Right);
-	Text(TEXT("ENERGY"), X + Px(14.0f), SummaryY + Px(20.0f), 11.0f, Dim);
-	Text(FString::Printf(TEXT("%.0f"), Spec.Energy * Pawn->GetMultiplier(EEarthfallMultiplier::Yield)),
-		X + Width - Px(14.0f), SummaryY + Px(19.0f), 13.0f, Spec.Color, EFace::Mono, EAlign::Right);
+	// The multipliers in real units: blast radius scales the body, yield its
+	// kinetic energy, so entry speed follows the square root of yield.
+	const FEarthfallImpactor Impactor = EarthfallPhysics::MakeImpactor(Pawn->GetWeaponIndex(),
+		Pawn->GetMultiplier(EEarthfallMultiplier::Yield), Pawn->GetMultiplier(EEarthfallMultiplier::BlastRadius));
+	const double Megatons = Impactor.Megatons();
+	const FString EnergyText = Megatons >= 1.0e6 ? FString::Printf(TEXT("%.2f Tt"), Megatons / 1.0e6)
+		: Megatons >= 1000.0 ? FString::Printf(TEXT("%.1f Gt"), Megatons / 1000.0) : FString::Printf(TEXT("%.1f Mt"), Megatons);
+	FString BodyText = EnergyText;
+	if (Impactor.bKinetic)
+	{
+		const FString SizeText = Impactor.DiameterMeters >= 1000.0
+			? FString::Printf(TEXT("%.2f km"), Impactor.DiameterMeters / 1000.0) : FString::Printf(TEXT("%.0f m"), Impactor.DiameterMeters);
+		BodyText = FString::Printf(TEXT("%s  %.1f km/s  %s"), *SizeText, Impactor.SpeedKmS, *EnergyText);
+	}
+	Text(Impactor.bKinetic ? TEXT("IMPACTOR") : TEXT("YIELD"), X + Px(14.0f), SummaryY + Px(20.0f), 11.0f, Dim);
+	Text(BodyText, X + Width - Px(14.0f), SummaryY + Px(19.0f), 13.0f, Spec.Color, EFace::Mono, EAlign::Right);
 }
 
 void AEarthfallHUD::DrawReticle(const AEarthOrbitPawn* Pawn, float ScreenWidth, float ScreenHeight)

@@ -14,7 +14,7 @@ float4 Main(float3 RelPos, float3 CamPos,
             Texture2D FireTex, SamplerState FireTexSampler,
             Texture2D NightTex, SamplerState NightTexSampler,
             Texture2D MasksTex, SamplerState MasksTexSampler,
-            float3 Sun, float Time, float4 Terrain, float Mode)
+            float3 Sun, float Time, float4 Terrain, float4 Atmos, float4 Column, float Mode)
 {
     float3 n = normalize(RelPos + CamPos);
     // Left-handed world: east is -Y, so longitude is atan2(-Y, X). V runs south.
@@ -31,7 +31,7 @@ float4 Main(float3 RelPos, float3 CamPos,
     float heat = saturate(Mask.g);
     float deposit = saturate(Ash.b);
     float flood = saturate(Wave.b * 3.0);
-    float crest = smoothstep(0.10, 0.60, abs((Wave.g - 0.5) * 20.0));
+    float crest = smoothstep(0.22, 0.95, abs((Wave.g - 0.5) * 20.0));
     float night = 1.0 - smoothstep(-0.20, 0.04, dot(n, Sun));
 
     // Open water, from the orbital water mask. That mask is about 5 km per texel,
@@ -53,6 +53,13 @@ float4 Main(float3 RelPos, float3 CamPos,
     float slopeEast = ((cE.g - cW.g) * 0.020 - (cE.r - cW.r) * 0.050) / (2.0 * texel.x * 6.2831853 * cosLat);
     float slopeSouth = ((cS.g - cN.g) * 0.020 - (cS.r - cN.r) * 0.050) / (2.0 * texel.y * 3.14159265);
     float relief = clamp(-(dot(Sun, east) * slopeEast - dot(Sun, north) * slopeSouth) * 1.6, -1.0, 1.0);
+
+    // Aerial haze: the further the ground, the more air in front of it. The
+    // scale height grows with the camera's altitude, and the colour follows the
+    // same soot-reddened sky as the orbital limb. Atmos = (health, sunlight).
+    float hazeAltitude = max(length(CamPos) - 99.85, 0.05);
+    float haze = (1.0 - exp(-length(RelPos) / (4.0 + 9.0 * hazeAltitude))) * 0.75;
+    float3 hazeCol = lerp(float3(0.62, 0.24, 0.09), float3(0.40, 0.58, 0.95), smoothstep(0.35, 0.92, Atmos.x)) * 0.55;
 
     if (Mode < 0.5)
     {
@@ -76,7 +83,10 @@ float4 Main(float3 RelPos, float3 CamPos,
         x = saturate(relief) * 0.35;             col = lerp(col, float3(0.50, 0.45, 0.40), x); a = a + x - a * x;
         // Deep ocean blue under the glint added in the emissive pass.
         x = water * 0.80;                        col = lerp(col, float3(0.010, 0.040, 0.105), x); a = a + x - a * x;
-        x = saturate(crest * 0.8 + flood * 0.3); col = lerp(col, float3(0.74, 0.95, 1.00), x); a = a + x - a * x;
+        x = saturate(crest * 0.6 + flood * 0.18); col = lerp(col, float3(0.74, 0.95, 1.00), x); a = a + x - a * x;
+        x = ColumnShadow(n, Sun, Column, float4(0.0, 0.0, 0.0, Column.w)) * 0.55;
+                                                 col = lerp(col, float3(0.0, 0.0, 0.0), x); a = a + x - a * x;
+        x = haze;                                col = lerp(col, hazeCol, x); a = a + x - a * x;
         return float4(col, saturate(a) * Terrain.x);
     }
 
@@ -86,7 +96,8 @@ float4 Main(float3 RelPos, float3 CamPos,
     float ridgeB = 1.0 - abs(2.0 * VNoise(mp * 2.7 + 11.0) - 1.0);
     float veins = ridgeA * 0.62 + ridgeB * 0.38;
     float veinMask = smoothstep(0.95 - 0.55 * heat, 1.0, veins);
-    float molten = saturate(veinMask * (0.35 + heat) + heat * heat * heat * 0.8) * saturate(Mask.r * 1.6);
+    // Open water quenches most of the melt, as on the orbital surface.
+    float molten = saturate(veinMask * (0.35 + heat) + heat * heat * heat * 0.8) * saturate(Mask.r * 1.6) * (1.0 - 0.8 * water);
     float3 magmaCol = lerp(float3(0.90, 0.06, 0.00), float3(1.00, 0.58, 0.14), saturate(molten * heat * 1.6));
     float3 emissive = magmaCol * molten * (1.5 + 11.0 * heat);
 
@@ -121,5 +132,5 @@ float4 Main(float3 RelPos, float3 CamPos,
     float sparkle = Hash13(floor(n * 14000.0));
     float3 lights = Texture2DSampleLevel(NightTex, NightTexSampler, uv, 0).rgb;
     emissive += lights * float3(1.0, 0.78, 0.45) * 4.2 * (0.08 + 4.5 * pow(sparkle, 5.0)) * 0.6 * night * (1.0 - blackout);
-    return float4(emissive * Terrain.x, 0.0);
+    return float4(emissive * (1.0 - 0.8 * haze) * Terrain.x, 0.0);
 }

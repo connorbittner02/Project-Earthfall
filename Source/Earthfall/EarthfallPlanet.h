@@ -47,6 +47,13 @@ public:
 	/** Fades each cloud deck as the camera nears it, and sizes the aim sphere to the visible ground. */
 	void SetCameraDistance(float Distance, float AimRadius);
 
+	/** A large ejecta fragment has landed: raise dust and, on land, light a fire. */
+	void SeedSecondaryImpact(const FVector& LocalDirection);
+	/** (atmosphere health 0..1 after soot, sunlight 0..1): drives haze colour on streamed terrain. */
+	FVector2D GetAtmosphereState() const { return FVector2D(AtmosphereHealthNow, SunlightNow); }
+	/** (planet-local direction, height in radii) of the tallest standing ash or steam column; height 0 if none. */
+	FLinearColor GetColumnShadowParams() const;
+
 	/** Unit vector from the planet toward the Sun, in world space. */
 	FVector GetSunDirectionWorld() const;
 
@@ -160,6 +167,9 @@ private:
 		float FlashPeak = 1.0f;
 		float FlashRadius = 0.2f;
 		FLinearColor FlashColor = FLinearColor::White;
+		/** A column stands here and casts a shadow for as long as the plume actor lives. */
+		bool bColumn = false;
+		bool bOceanColumn = false;
 	};
 
 	TArray<FImpactStamp> ImpactStamps;
@@ -184,6 +194,11 @@ private:
 	float EnvironmentAccumulator = 0.0f;
 	int32 AshReadIndex = 0;
 	float SurfaceFade = 1.0f;
+	float AtmosphereHealthNow = 1.0f;
+	float SunlightNow = 1.0f;
+	/** Strength 0..1 of the strongest tsunami still running; sets wave speed and run-up. */
+	float TsunamiDrive = 0.0f;
+	int32 LastShockSlot = 0;
 	float LowCloudProximity = 1.0f;
 	float HighCloudProximity = 1.0f;
 	int32 TsunamiReadIndex = 0;

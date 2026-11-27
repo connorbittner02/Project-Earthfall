@@ -1,6 +1,7 @@
 #include "EarthfallGameMode.h"
 #include "EarthOrbitPawn.h"
 #include "EarthfallCaptureDirector.h"
+#include "EarthfallEjecta.h"
 #include "EarthfallHUD.h"
 #include "EarthfallMoon.h"
 #include "EarthfallPlanet.h"
@@ -79,6 +80,7 @@ void AEarthfallGameMode::BeginPlay()
 	World->SpawnActor<AEarthfallMoon>(AEarthfallMoon::StaticClass(), FTransform::Identity, Params);
 	// Hands low orbit over to streamed terrain when Cesium for Unreal is installed.
 	World->SpawnActor<AEarthfallTerrainStreamer>(AEarthfallTerrainStreamer::StaticClass(), FTransform::Identity, Params);
+	World->SpawnActor<AEarthfallEjecta>(AEarthfallEjecta::StaticClass(), FTransform::Identity, Params);
 
 	// The planet, clouds, Moon and Sun are unlit and shade themselves from the
 	// same UTC sun vector. This light only exists for lit Niagara particles; it

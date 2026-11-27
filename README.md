@@ -38,6 +38,13 @@ City locations, population distribution and all casualty, climate, grid and fall
 - Minimum orbit is 1.035 R, above the cloud decks. Zoom eases in log-altitude, drag speed scales with altitude, and below 0.22 R of altitude the camera pitches up to a horizon view.
 - Distance-faded procedural detail: micro-terrain normals, mottled ground, forest canopy, city blocks, point city lights, extra ocean wave trains in the sunglint, and finer cloud erosion. The atmosphere shell is two-sided so the limb survives the camera entering it.
 
+**Movie-grade destruction** (see `docs/movie-grade-destruction.md`)
+
+- Impacts have a physical body: diameter from the blast multiplier, entry speed from yield, energy from `1/2 m v^2`. Ocean strikes size their tsunami from the water they displace.
+- Ocean hits throw a splash crown and a steam column; land hits raise an ash column to 1.08 R that shadows the clouds and ground.
+- Sub-orbital ejecta fly ballistic arcs under spherical gravity and fall back as re-entry streaks that start secondary fires.
+- Airborne soot turns the limb and the terrain haze amber-red and dims the sun.
+
 ## Controls
 
 | Input | Action |

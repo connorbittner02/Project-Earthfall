@@ -30,7 +30,7 @@ float3 Main(float3 LocalPos, float3 CamLocal, float3 Sun, float4 Shape)
     float sunAmount = dot(limbDir, Sun);
     float lit = smoothstep(-0.28, 0.25, sunAmount);
     float twilight = exp(-Pow2(sunAmount / 0.20));
-    float3 rayleigh = lerp(float3(0.42, 0.30, 0.20), float3(0.16, 0.42, 1.00), Shape.w);
+    float3 rayleigh = lerp(float3(0.72, 0.24, 0.07), float3(0.16, 0.42, 1.00), smoothstep(0.35, 0.92, Shape.w));
     float3 col = lerp(rayleigh, float3(1.00, 0.42, 0.12), twilight * 0.80);
     return col * glow * lit * Shape.z;
 }

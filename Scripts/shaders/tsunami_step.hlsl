@@ -7,10 +7,12 @@
 // Water carries the wave; land reflects it and records how hard it was hit, which
 // the surface shader uses to draw foam and black out city lights along the coast.
 // Step = (delta seconds, wave speed rad/s, texel width, texel height).
+// Flood = (run-up kept per texel inland, shoreline gain): both rise with the
+// volume of water the impact displaced, so a bigger strike floods further.
 // The wave speed must match UEarthfallPopulationSubsystem::TsunamiSpeed, which
 // times the CPU landfalls that trip power grids and cause casualties.
 float3 Main(float2 UV, Texture2D WaveTex, SamplerState WaveTexSampler,
-            Texture2D MasksTex, SamplerState MasksTexSampler, float4 Step)
+            Texture2D MasksTex, SamplerState MasksTexSampler, float4 Step, float4 Flood)
 {
     float2 px = Step.zw;
     float2 offsets[4] = { float2(px.x, 0.0), float2(-px.x, 0.0), float2(0.0, px.y), float2(0.0, -px.y) };
@@ -42,7 +44,7 @@ float3 Main(float2 UV, Texture2D WaveTex, SamplerState WaveTexSampler,
     {
         // Run-up: the shoreline takes the wave's height and the flood creeps a few
         // texels inland, losing a tenth of its strength each texel.
-        float flood = max(here.b * exp(-Step.x / 45.0), max(strongestWave * 4.0, neighbourFlood * 0.90 - 0.01));
+        float flood = max(here.b * exp(-Step.x / 45.0), max(strongestWave * Flood.y, neighbourFlood * Flood.x - 0.01));
         return float3(0.5, 0.5, saturate(flood));
     }
 

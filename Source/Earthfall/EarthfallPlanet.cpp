@@ -1,4 +1,6 @@
 #include "EarthfallPlanet.h"
+#include "EarthfallEjecta.h"
+#include "EarthfallPlume.h"
 #include "EarthImpactFeedback.h"
 #include "EarthfallPopulationSubsystem.h"
 #include "Components/DirectionalLightComponent.h"
@@ -614,6 +616,9 @@ void AEarthfallPlanet::StartShock(const FVector& LocalDirection, float BlastAngl
 	Shock.FlashPeak = FlashPeaks[Strike.WeaponIndex] * FMath::Pow(FMath::Max(Strike.YieldMultiplier, 0.01f), 0.25f);
 	Shock.FlashRadius = BlastAngle * 1.6f + 0.10f;
 	Shock.FlashColor = bNuclear ? FLinearColor(1.0f, 0.82f, 0.62f) : EarthfallWeapons::Get(Strike.WeaponIndex).Color;
+	Shock.bColumn = false;
+	Shock.bOceanColumn = false;
+	LastShockSlot = Slot;
 	bShockParametersDirty = true;
 }
 
@@ -624,7 +629,7 @@ void AEarthfallPlanet::UpdateShocks(float DeltaSeconds)
 	{
 		if (!Shock.bActive) continue;
 		Shock.Age += DeltaSeconds;
-		if (Shock.Speed * Shock.Age >= Shock.MaxRadius && Shock.Age > 4.0f)
+		if (Shock.Speed * Shock.Age >= Shock.MaxRadius && Shock.Age > 4.0f && (!Shock.bColumn || Shock.Age > AEarthfallPlume::LifeSeconds))
 		{
 			Shock.bActive = false;
 			bShockParametersDirty = true;
@@ -657,6 +662,11 @@ void AEarthfallPlanet::PushShockParameters()
 			A = FLinearColor(Shock.Direction.X, Shock.Direction.Y, Shock.Direction.Z, Radius);
 			B = FLinearColor(Fade, Flash, Shock.FlashRadius, Fade * (0.35f + 0.65f * (1.0f - Progress)));
 			C = Shock.FlashColor;
+			// C.a carries the column's height in radii for the shadow it casts.
+			C.A = Shock.bColumn
+				? AEarthfallPlume::HeightFraction(Shock.Age, Shock.bOceanColumn)
+					* (1.0f - FMath::SmoothStep(AEarthfallPlume::LifeSeconds * 0.65f, AEarthfallPlume::LifeSeconds, Shock.Age))
+				: 0.0f;
 		}
 		const FName NameA(*FString::Printf(TEXT("ShockA%d"), Index));
 		const FName NameB(*FString::Printf(TEXT("ShockB%d"), Index));
@@ -699,8 +709,13 @@ void AEarthfallPlanet::UpdateEnvironment()
 	const FEarthfallTelemetry Telemetry = Population->GetTelemetry();
 	// A choked atmosphere turns the limb from Rayleigh blue toward soot brown and
 	// dims the sun reaching the ground.
-	const float Health = FMath::Clamp(Telemetry.AtmosphereHealth / 100.0f, 0.0f, 1.0f);
-	const float Sunlight = FMath::Clamp(Telemetry.SunlightPercent / 100.0f, 0.25f, 1.0f);
+	// Airborne soot does the same from the first few teragrams: the sky goes
+	// amber, then blood red, and the surface darkens under it.
+	const float Soot = FMath::Clamp(Telemetry.SootTeragrams / 45.0f, 0.0f, 1.0f);
+	const float Health = FMath::Clamp(Telemetry.AtmosphereHealth / 100.0f, 0.0f, 1.0f) * (1.0f - 0.85f * Soot);
+	const float Sunlight = FMath::Clamp(Telemetry.SunlightPercent / 100.0f, 0.25f, 1.0f) * (1.0f - 0.35f * Soot);
+	AtmosphereHealthNow = Health;
+	SunlightNow = Sunlight;
 	if (SurfaceMID)
 	{
 		SurfaceMID->SetVectorParameterValue(TEXT("Tuning"), FLinearColor(SunIntensity * Sunlight, CityLightGain, Health, SunglintGain));
@@ -736,6 +751,9 @@ void AEarthfallPlanet::ResetPlanet()
 	FireReadIndex = 0;
 	TsunamiActiveSeconds = 0.0f;
 	FireActiveSeconds = 0.0f;
+	TsunamiDrive = 0.0f;
+	for (TActorIterator<AEarthfallPlume> It(GetWorld()); It; ++It) It->Destroy();
+	for (TActorIterator<AEarthfallEjecta> It(GetWorld()); It; ++It) It->Reset();
 	BindSimulationTextures();
 	BuildPlanetMesh();
 	RedrawImpactMask();
@@ -762,6 +780,10 @@ void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
 	const bool bNuclear = Strike.WeaponIndex == EarthfallWeapons::Nuclear;
 	const float BlastAngle = FMath::Clamp(Strike.Radius / PlanetRadius, 0.01f, 2.6f);
 	const float YieldLog = FMath::Max(0.0f, FMath::Log2(FMath::Max(Strike.YieldMultiplier, 1.0f)));
+	// Strikes built by hand (ApplyImpact) carry no impactor; derive one.
+	const FEarthfallImpactor Impactor = Strike.Impactor.EnergyJoules > 0.0
+		? Strike.Impactor : EarthfallPhysics::MakeImpactor(Strike.WeaponIndex, Strike.YieldMultiplier, 1.0f);
+	bool bOceanStrike = false;
 
 	float ShockMaxRadius = 0.0f;
 	float ShockSpeed = 0.0f;
@@ -795,16 +817,24 @@ void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
 		Population->ApplyStrike(LocalDirection, BlastAngle, Strike.Energy, Strike.WeaponIndex, Strike.YieldMultiplier, Strike.FalloutMultiplier);
 		const bool bOcean = Population->GetCountryAtDirection(LocalDirection) == 0;
 		const int32 Weapon = Strike.WeaponIndex;
-		if (bOcean && (Weapon == 0 || Weapon == 2 || Weapon == 4 || bNuclear))
+		// Wave height, speed and run-up all come from the water the impact
+		// displaces, which comes from its kinetic energy: 1/2 m v^2.
+		const float WaveStrength = (Impactor.bKinetic || bNuclear) ? Impactor.TsunamiStrength() : 0.0f;
+		bOceanStrike = bOcean;
+		if (bOcean && WaveStrength > 0.0f)
 		{
 			// An ocean hit lifts the sea surface; the wave equation does the rest.
-			const float Amplitude = FMath::Clamp(Strike.Energy / 160.0f, 0.35f, 1.0f);
+			const float CavityAngle = static_cast<float>(Impactor.WaterCavityRadiusMeters() / 6371000.0);
 			if (TsunamiRTs.IsValidIndex(TsunamiReadIndex))
 			{
-				StampInto(TsunamiRTs[TsunamiReadIndex], AshStampTexture, LocalDirection, BlastAngle * 0.9f + 0.03f, FLinearColor(Amplitude * 0.5f, 0.0f, 0.0f, 1.0f));
+				StampInto(TsunamiRTs[TsunamiReadIndex], AshStampTexture, LocalDirection,
+					FMath::Max(BlastAngle * 0.9f, CavityAngle * 6.0f) + 0.03f, FLinearColor(WaveStrength * 0.5f, 0.0f, 0.0f, 1.0f));
 			}
 			TsunamiActiveSeconds = TsunamiTailSeconds;
-			Population->AddTsunami(LocalDirection, Amplitude * 2.0f);
+			TsunamiDrive = FMath::Max(TsunamiDrive, WaveStrength);
+			Population->AddTsunami(LocalDirection, WaveStrength * 2.0f);
+			UE_LOG(LogTemp, Display, TEXT("EARTHFALL_IMPACT ocean strike: %.3g Mt, cavity %.1f km, displaced %.3g km3, wave strength %.2f"),
+				Impactor.Megatons(), Impactor.WaterCavityRadiusMeters() / 1000.0, Impactor.DisplacedWaterKm3(), WaveStrength);
 		}
 		else if (!bOcean && (Weapon == 0 || Weapon == 1 || Weapon == 2 || bNuclear))
 		{
@@ -837,6 +867,36 @@ void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
 		FX.ShockSpeed = ShockSpeed;
 		FX.YieldMultiplier = Strike.YieldMultiplier;
 		Feedback->InitFeedback(FX);
+	}
+
+	// The tall, slow part: an ash column on land, a splash crown and steam at sea.
+	const int32 StruckWith = Strike.WeaponIndex;
+	if (StruckWith == 0 || StruckWith == 2 || StruckWith == 4 || bNuclear)
+	{
+		if (AEarthfallPlume* Plume = GetWorld()->SpawnActor<AEarthfallPlume>(
+			AEarthfallPlume::StaticClass(), SurfacePoint, FRotationMatrix::MakeFromZ(WorldNormal).Rotator(), Params))
+		{
+			FEarthfallPlumeParams Column;
+			Column.PlanetRadius = PlanetRadius;
+			Column.BlastRadius = FMath::Clamp(Strike.Radius, 2.0f, PlanetRadius * 0.5f);
+			Column.bOcean = bOceanStrike;
+			Column.Strength = bOceanStrike ? Impactor.TsunamiStrength() : 0.5f;
+			Column.SunDirection = GetSunDirectionWorld();
+			Plume->InitPlume(Column);
+			Shocks[LastShockSlot].bColumn = true;
+			Shocks[LastShockSlot].bOceanColumn = bOceanStrike;
+		}
+
+		// Sub-orbital ejecta: molten rock on land, far less from open water.
+		static const int32 FragmentCounts[EarthfallWeapons::Count] = {350, 0, 2600, 0, 2400, 700};
+		static const float FragmentSpeeds[EarthfallWeapons::Count] = {0.70f, 0.0f, 1.0f, 0.0f, 1.0f, 0.75f};
+		for (TActorIterator<AEarthfallEjecta> It(GetWorld()); It; ++It)
+		{
+			const float Boost = FMath::Clamp(FMath::Pow(FMath::Max(Strike.YieldMultiplier, 0.01f), 0.08f), 0.8f, 1.3f);
+			It->Launch(LocalDirection, FMath::RoundToInt32(FragmentCounts[StruckWith] * (bOceanStrike ? 0.15f : 1.0f)),
+				FragmentSpeeds[StruckWith] * Boost * (bOceanStrike ? 0.8f : 1.0f));
+			break;
+		}
 	}
 }
 
@@ -928,8 +988,12 @@ void AEarthfallPlanet::StepTsunami()
 	if (!GetWorld() || TsunamiRTs.Num() != 2 || !TsunamiStepMID) return;
 	const int32 WriteIndex = 1 - TsunamiReadIndex;
 	TsunamiStepMID->SetTextureParameterValue(TEXT("WaveSource"), TsunamiRTs[TsunamiReadIndex]);
+	// A bigger displaced volume makes a longer wave, which runs faster and
+	// further inland. The speed range stays inside the explicit step's stability limit.
 	TsunamiStepMID->SetVectorParameterValue(TEXT("Step"),
-		FLinearColor(TsunamiStepSeconds, UEarthfallPopulationSubsystem::TsunamiSpeed, 1.0f / SimWidth, 1.0f / SimHeight));
+		FLinearColor(TsunamiStepSeconds, UEarthfallPopulationSubsystem::TsunamiSpeed * FMath::Lerp(0.85f, 1.05f, TsunamiDrive), 1.0f / SimWidth, 1.0f / SimHeight));
+	TsunamiStepMID->SetVectorParameterValue(TEXT("Flood"),
+		FLinearColor(FMath::Lerp(0.84f, 0.955f, TsunamiDrive), FMath::Lerp(3.0f, 5.0f, TsunamiDrive), 0.0f, 0.0f));
 	UKismetRenderingLibrary::DrawMaterialToRenderTarget(GetWorld(), TsunamiRTs[WriteIndex], TsunamiStepMID);
 	TsunamiReadIndex = WriteIndex;
 	BindSimulationTextures();
@@ -946,4 +1010,33 @@ void AEarthfallPlanet::StepFire(float StepSeconds)
 	UKismetRenderingLibrary::DrawMaterialToRenderTarget(GetWorld(), FireRTs[WriteIndex], FireStepMID);
 	FireReadIndex = WriteIndex;
 	BindSimulationTextures();
+}
+
+void AEarthfallPlanet::SeedSecondaryImpact(const FVector& LocalDirection)
+{
+	if (!GetWorld() || LocalDirection.IsNearlyZero()) return;
+	const UEarthfallPopulationSubsystem* Population = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>();
+	const bool bLand = Population && Population->GetCountryAtDirection(LocalDirection) != 0;
+	// A dust plume everywhere; a fire only where there is something to burn.
+	StampAsh(LocalDirection, 0.022f, 0.35f, 0.0f);
+	AshActiveSeconds = FMath::Max(AshActiveSeconds, 60.0f);
+	if (bLand && FireRTs.IsValidIndex(FireReadIndex))
+	{
+		StampInto(FireRTs[FireReadIndex], AshStampTexture, LocalDirection, 0.012f, FLinearColor(1.0f, 0.0f, 0.0f, 1.0f));
+		FireActiveSeconds = FireTailSeconds;
+		AshActiveSeconds = FMath::Max(AshActiveSeconds, FireTailSeconds);
+	}
+}
+
+FLinearColor AEarthfallPlanet::GetColumnShadowParams() const
+{
+	FLinearColor Best(1.0f, 0.0f, 0.0f, 0.0f);
+	for (const FShock& Shock : Shocks)
+	{
+		if (!Shock.bActive || !Shock.bColumn) continue;
+		const float Height = AEarthfallPlume::HeightFraction(Shock.Age, Shock.bOceanColumn)
+			* (1.0f - FMath::SmoothStep(AEarthfallPlume::LifeSeconds * 0.65f, AEarthfallPlume::LifeSeconds, Shock.Age));
+		if (Height > Best.A) Best = FLinearColor(Shock.Direction.X, Shock.Direction.Y, Shock.Direction.Z, Height);
+	}
+	return Best;
 }

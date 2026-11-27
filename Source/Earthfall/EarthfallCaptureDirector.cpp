@@ -153,7 +153,29 @@ void AEarthfallCaptureDirector::BuildScript()
 	// The floor drops only once terrain is ready again, so descend in a second step.
 	At(61.5f, [=]() { View(-48.0f, -18.0f, 100.6f); });
 	At(69.0f, [this]() { Shot(TEXT("28-terrain-crater")); });
-	At(70.0f, [this]() { Finish(); });
+	// Ocean impact south of Mexico: a 600 m ice body at 2x yield. The splash crown
+	// from low orbit, then the wave reaching the streamed Oaxaca coast 7 degrees away.
+	At(69.2f, [=, this]() { View(-99.0f, 3.5f, 112.0f); Weapon(4, 3); if (AEarthOrbitPawn* P = Pawn()) P->SetMultiplierIndex(EEarthfallMultiplier::BlastRadius, 1); });
+	At(69.6f, [=]() { Fire(8.5, -99.0); });
+	At(73.0f, [this]() { Shot(TEXT("29-splash-crown")); });
+	At(73.2f, [=, this]() { View(-97.0f, 14.2f, 103.5f); if (AEarthOrbitPawn* P = Pawn()) P->SetMultiplierIndex(EEarthfallMultiplier::BlastRadius, EarthfallMultipliers::DefaultIndex); });
+	At(75.6f, [=]() { View(-97.0f, 14.2f, 100.5f); });
+	At(84.0f, [this]() { Shot(TEXT("30-tsunami-terrain-coast")); });
+
+	// Mantle charge on the northern plains, seen near the limb so the ejecta
+	// curtain climbs against black space and then falls back as streaks.
+	At(84.2f, [=]() { View(0.0f, 45.0f, 430.0f); Weapon(2, 3); });
+	At(84.6f, [=]() { Fire(45.0, -100.0); });
+	At(88.3f, [this]() { Shot(TEXT("31-ejecta-launch")); });
+	At(92.0f, [this]() { Shot(TEXT("32-ejecta-arc")); });
+	At(97.0f, [this]() { Shot(TEXT("33-reentry-streaks")); });
+
+	// The same strike's ash column from under the cloud decks, 25 degrees south
+	// over streamed terrain, in the soot-reddened haze.
+	At(97.2f, [=]() { View(-100.0f, 20.0f, 103.5f); });
+	At(100.0f, [=]() { View(-100.0f, 20.0f, 101.2f); });
+	At(110.0f, [this]() { Shot(TEXT("34-ash-column-terrain")); });
+	At(111.0f, [this]() { Finish(); });
 
 	Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
 }

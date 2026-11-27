@@ -73,6 +73,8 @@ float4 Main(float3 LocalPos, float3 ViewLocal, float CamDist, float2 UV, float3 
         plumeShadow = max(plumeShadow, Texture2DSampleLevel(AshTex, AshTexSampler, UV + sunUV * (ps * 0.016), 0).r);
     }
     cloudCol *= 1.0 - 0.55 * pow(saturate(plumeShadow), 0.7);
+    // And the columns that punch through the deck shadow it too.
+    cloudCol *= 1.0 - 0.50 * max(max(ColumnShadow(n, Sun, A0, C0), ColumnShadow(n, Sun, A1, C1)), max(ColumnShadow(n, Sun, A2, C2), ColumnShadow(n, Sun, A3, C3)));
     // Semi-transparent vapour: feathered edges ramp to 0.45, and even the
     // thickest cores stop at 0.78 so ocean and land read through.
     float cloudAlpha = 0.45 * smoothstep(0.0, 0.50, density) + 0.33 * smoothstep(0.45, 1.0, density);

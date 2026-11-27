@@ -156,6 +156,76 @@ namespace EarthfallMultipliers
 	}
 }
 
+/**
+ * The physical body behind a strike. The blast-radius multiplier scales its
+ * diameter and the yield multiplier scales its kinetic energy, so entry speed
+ * goes with the square root of yield: E = 1/2 m v^2.
+ */
+struct FEarthfallImpactor
+{
+	/** False for beams, singularities and warheads, whose energy is not kinetic. */
+	bool bKinetic = false;
+	double DiameterMeters = 0.0;
+	double SpeedKmS = 0.0;
+	double MassKg = 0.0;
+	double EnergyJoules = 0.0;
+
+	double Megatons() const { return EnergyJoules / 4.184e15; }
+
+	/** Transient cavity radius in deep water, metres. Gravity-regime scaling: R = 1/2 (E / (rho g))^(1/4). */
+	double WaterCavityRadiusMeters() const
+	{
+		return 0.5 * FMath::Pow(FMath::Max(EnergyJoules, 0.0) / (1000.0 * 9.81), 0.25);
+	}
+
+	/** Water thrown out of a hemispherical cavity of that radius, cubic kilometres. */
+	double DisplacedWaterKm3() const
+	{
+		const double RadiusKm = WaterCavityRadiusMeters() / 1000.0;
+		return (2.0 / 3.0) * PI * RadiusKm * RadiusKm * RadiusKm;
+	}
+
+	/** 0 = no tsunami, otherwise 0.25..1 on a log scale of displaced volume (1 near 10,000 km3). */
+	float TsunamiStrength() const
+	{
+		const double Volume = DisplacedWaterKm3();
+		if (Volume < 0.05) return 0.0f;
+		return FMath::Clamp(0.25f + 0.18f * static_cast<float>(FMath::LogX(10.0, Volume + 1.0)), 0.25f, 1.0f);
+	}
+};
+
+namespace EarthfallPhysics
+{
+	inline FEarthfallImpactor MakeImpactor(int32 WeaponIndex, float YieldMultiplier, float RadiusMultiplier)
+	{
+		struct FBody { bool bKinetic; double Diameter; double SpeedKmS; double Density; double Megatons; };
+		// Rod: tungsten. Mantle charge: steel penetrator. Cryo impactor: an ice body.
+		static const FBody Bodies[EarthfallWeapons::Count] = {
+			{true, 20.0, 11.0, 19250.0, 0.0},
+			{false, 0.0, 0.0, 0.0, 5.0},
+			{true, 350.0, 12.0, 7800.0, 0.0},
+			{false, 0.0, 0.0, 0.0, 100.0},
+			{true, 1200.0, 20.0, 917.0, 0.0},
+			{false, 0.0, 0.0, 0.0, 50.0},
+		};
+		const FBody& Body = Bodies[FMath::Clamp(WeaponIndex, 0, EarthfallWeapons::Count - 1)];
+		const double Yield = FMath::Max(static_cast<double>(YieldMultiplier), 0.01);
+		FEarthfallImpactor Impactor;
+		Impactor.bKinetic = Body.bKinetic;
+		if (!Body.bKinetic)
+		{
+			Impactor.EnergyJoules = Body.Megatons * Yield * 4.184e15;
+			return Impactor;
+		}
+		Impactor.DiameterMeters = Body.Diameter * FMath::Max(static_cast<double>(RadiusMultiplier), 0.05);
+		Impactor.SpeedKmS = Body.SpeedKmS * FMath::Sqrt(Yield);
+		Impactor.MassKg = Body.Density * (PI / 6.0) * FMath::Pow(Impactor.DiameterMeters, 3.0);
+		const double SpeedMetres = Impactor.SpeedKmS * 1000.0;
+		Impactor.EnergyJoules = 0.5 * Impactor.MassKg * SpeedMetres * SpeedMetres;
+		return Impactor;
+	}
+}
+
 /** Everything the planet needs to resolve one detonation. */
 struct FEarthfallStrike
 {
@@ -167,6 +237,8 @@ struct FEarthfallStrike
 	float Energy = 50.0f;
 	float YieldMultiplier = 1.0f;
 	float FalloutMultiplier = 1.0f;
+	/** The body and its kinetic energy in real units. */
+	FEarthfallImpactor Impactor;
 
 	/** Blast radius grows with the fourth root of yield so 100x is ~3x wider, not 100x. */
 	static FEarthfallStrike Make(const FVector& InWorldLocation, int32 InWeaponIndex,
@@ -180,6 +252,7 @@ struct FEarthfallStrike
 		Strike.Energy = Spec.Energy * YieldMultiplier;
 		Strike.YieldMultiplier = YieldMultiplier;
 		Strike.FalloutMultiplier = FalloutMultiplier;
+		Strike.Impactor = EarthfallPhysics::MakeImpactor(InWeaponIndex, YieldMultiplier, RadiusMultiplier);
 		return Strike;
 	}
 

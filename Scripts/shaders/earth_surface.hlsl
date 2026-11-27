@@ -118,6 +118,8 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
         plumeShadow = max(plumeShadow, Texture2DSampleLevel(AshTex, AshTexSampler, PomUV + sunUV * (ps * 0.022), 0).r);
     }
     float sunShade = (1.0 - 0.75 * craterShadow) * (1.0 - 0.50 * pow(saturate(plumeShadow), 0.7));
+    // Standing ash and steam columns throw long soft shadows across the ground.
+    sunShade *= 1.0 - 0.60 * max(max(ColumnShadow(n, Sun, A0, C0), ColumnShadow(n, Sun, A1, C1)), max(ColumnShadow(n, Sun, A2, C2), ColumnShadow(n, Sun, A3, C3)));
 
     // --- Cloud shadow: the same weather field, sampled toward the sun.
     float3 sunTangent = Sun - n * NdLs;
@@ -195,7 +197,7 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
     float rim = pow(1.0 - mu, 9.0);
     float atmLight = smoothstep(-0.22, 0.28, NdLs);
     float twilight = exp(-Pow2(NdLs / 0.17));
-    float3 rayleigh = lerp(float3(0.42, 0.30, 0.20), float3(0.15, 0.40, 1.00), Tuning.z);
+    float3 rayleigh = lerp(float3(0.72, 0.24, 0.07), float3(0.15, 0.40, 1.00), smoothstep(0.35, 0.92, Tuning.z));
     float3 scatterCol = lerp(rayleigh, float3(1.00, 0.40, 0.10), twilight * 0.78);
     lit = lit * (1.0 - 0.40 * fresnel);
     lit += scatterCol * (0.030 + 0.75 * fresnel + 0.55 * rim) * atmLight;
