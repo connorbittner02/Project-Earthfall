@@ -3,6 +3,8 @@
 #include "EarthfallPlanet.h"
 #include "EarthOrbitPawn.h"
 #include "EarthfallPopulationSubsystem.h"
+#include "EarthfallProjectile.h"
+#include "EarthfallSandboxSubsystem.h"
 #include "EarthfallTypes.h"
 #include "AssetCompilingManager.h"
 #include "Engine/World.h"
@@ -64,6 +66,9 @@ void AEarthfallCaptureDirector::BuildScript()
 	auto Fire = [this](double Latitude, double Longitude)
 	{
 		if (AEarthOrbitPawn* P = Pawn()) P->FireAtDirection(EarthfallSolar::DirectionFromLatLon(Latitude, Longitude));
+		// Scripted showcase strikes always land: defenders get no shot at them. The
+		// interception shots use LaunchWeaponAt, which they can stop.
+		for (TActorIterator<AEarthfallProjectile> It(GetWorld()); It; ++It) It->bDefenseChecked = true;
 	};
 
 	// The shot list assumes -EarthfallSunLon=-60 -EarthfallSunLat=10: the Americas
@@ -191,8 +196,52 @@ void AEarthfallCaptureDirector::BuildScript()
 		for (TActorIterator<AEarthfallPlanet> It(GetWorld()); It; ++It) It->SetWinterOverride(0.75f);
 	});
 	At(114.5f, [this]() { Shot(TEXT("37-nuclear-winter-ice")); });
-	At(114.6f, [this]() { for (TActorIterator<AEarthfallPlanet> It(GetWorld()); It; ++It) It->SetWinterOverride(-1.0f); });
-	At(115.2f, [this]() { Finish(); });
+	// Thaw before the war shots, then hand the ice back to the climate.
+	At(114.6f, [this]() { for (TActorIterator<AEarthfallPlanet> It(GetWorld()); It; ++It) It->SetWinterOverride(0.0f); });
+	At(114.8f, [this]() { for (TActorIterator<AEarthfallPlanet> It(GetWorld()); It; ++It) It->SetWinterOverride(-1.0f); });
+	// Whisper of War: Beijing, then New Delhi, two powers the script has not touched.
+	// Seen from over the Himalaya on the night side, where the missiles glow.
+	At(115.0f, [=, this]()
+	{
+		View(97.0f, 34.0f, 330.0f);
+		AEarthOrbitPawn* P = Pawn();
+		UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>();
+		if (!P || !Sandbox) return;
+		P->SetHudMode(EEarthfallHudMode::Full);
+		P->SelectTool(EarthfallTools::TabDiplomacy, EarthfallTools::WhisperOfWar);
+		Sandbox->UseTool(EarthfallTools::TabDiplomacy, EarthfallTools::WhisperOfWar, EarthfallSolar::DirectionFromLatLon(39.9, 116.4), P);
+		Sandbox->UseTool(EarthfallTools::TabDiplomacy, EarthfallTools::WhisperOfWar, EarthfallSolar::DirectionFromLatLon(28.6, 77.2), P);
+	});
+	At(117.2f, [this]() { Shot(TEXT("38-war-declared")); });
+	At(123.5f, [this]() { Shot(TEXT("39-ai-missile-exchange")); });
+	At(123.7f, [this]() { if (AEarthOrbitPawn* P = Pawn()) P->InspectDirection(EarthfallSolar::DirectionFromLatLon(39.9, 116.4)); });
+	At(124.9f, [this]() { Shot(TEXT("40-faction-dossier")); });
+	// A salvo of six rods at Canberra, under a defense satellite: the battery and
+	// the satellite each stop one, and reload too slowly to stop the rest.
+	At(125.0f, [=, this]()
+	{
+		View(146.0f, -30.0f, 240.0f);
+		AEarthOrbitPawn* P = Pawn();
+		UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>();
+		if (!P || !Sandbox) return;
+		P->ToggleInspectMode();
+		P->SetHudMode(EEarthfallHudMode::TickerOnly);
+		Sandbox->UseTool(EarthfallTools::TabDiplomacy, EarthfallTools::DefenseSatellite, EarthfallSolar::DirectionFromLatLon(-35.3, 149.1), P);
+	});
+	At(126.2f, [this]() { if (AEarthOrbitPawn* P = Pawn()) for (int32 Rod = 0; Rod < 6; ++Rod) P->LaunchWeaponAt(EarthfallSolar::DirectionFromLatLon(-35.3 + Rod * 0.7, 149.1 - Rod * 1.1), 0, 1.0f, 1.0f, 0.0f); });
+	At(126.60f, [this]() { Shot(TEXT("41-interceptors")); });
+	At(128.5f, [this]() { Shot(TEXT("42-salvo-aftermath")); });
+	// The debris ring, pinned high for the shot.
+	At(128.6f, [=, this]() { View(-25.0f, 18.0f, 520.0f); if (UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>()) Sandbox->AddDebris(1.0f); if (AEarthOrbitPawn* P = Pawn()) P->SetHudMode(EEarthfallHudMode::Hidden); });
+	At(130.6f, [this]() { Shot(TEXT("43-kessler-debris")); });
+	At(131.0f, [this]()
+	{
+		if (const UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>())
+		{
+			UE_LOG(LogEarthfallCapture, Display, TEXT("EARTHFALL_CAPTURE sandbox intercepts=%d debris=%.2f"), Sandbox->GetInterceptCount(), Sandbox->GetDebrisLevel());
+		}
+		Finish();
+	});
 
 	Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
 }

@@ -1,6 +1,7 @@
 #include "EarthfallPlanet.h"
 #include "EarthfallEjecta.h"
 #include "EarthfallPlume.h"
+#include "EarthfallSandboxSubsystem.h"
 #include "EarthImpactFeedback.h"
 #include "EarthfallPopulationSubsystem.h"
 #include "Components/DirectionalLightComponent.h"
@@ -854,6 +855,7 @@ void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
 	}
 	UpdateEnvironment();
 	if (!bOceanStrike) DeformCrater(LocalDirection, Strike);
+	if (UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>()) Sandbox->NotifyStrike(LocalDirection, Strike);
 
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;

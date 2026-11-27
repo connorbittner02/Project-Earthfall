@@ -1,6 +1,7 @@
 #include "EarthfallHUD.h"
 #include "EarthOrbitPawn.h"
 #include "EarthfallPopulationSubsystem.h"
+#include "EarthfallSandboxSubsystem.h"
 #include "CanvasItem.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
@@ -514,7 +515,10 @@ void AEarthfallHUD::DrawCountryDossier(const AEarthOrbitPawn* Pawn)
 		return;
 	}
 
-	Panel(X, Y, Width, Px(72.0f) + RowHeight * 7 + Px(10.0f), TEXT("COUNTRY DOSSIER"));
+	FEarthfallFactionInfo Faction;
+	const UEarthfallSandboxSubsystem* Sandbox = World->GetSubsystem<UEarthfallSandboxSubsystem>();
+	const bool bFaction = Sandbox && Sandbox->GetFactionInfo(Stats.Id, Faction);
+	Panel(X, Y, Width, Px(72.0f) + RowHeight * (bFaction ? 11 : 7) + Px(10.0f), TEXT("COUNTRY DOSSIER"));
 	Text(Stats.Name.ToUpper(), X + Px(14.0f), Y + Px(34.0f), 19.0f, White, EFace::Bold);
 	float RowY = Y + Px(70.0f);
 	const float LabelX = X + Px(14.0f);
@@ -541,4 +545,13 @@ void AEarthfallHUD::DrawCountryDossier(const AEarthOrbitPawn* Pawn)
 	static const FLinearColor StabilityColors[] = {Green, Orange, Red, FLinearColor(0.75f, 0.20f, 0.95f, 1.0f)};
 	Row(TEXT("GOVERNMENT"), UEarthfallPopulationSubsystem::StabilityLabel(Stats.Stability),
 		StabilityColors[static_cast<int32>(Stats.Stability)]);
+	if (bFaction)
+	{
+		// The nation as a power: what it can throw, and at whom.
+		Row(TEXT("MILITARY"), FString::Printf(TEXT("%.0f / 100"), Faction.MilitaryStrength), White, Faction.MilitaryStrength / 100.0f);
+		Row(TEXT("WARHEADS"), FString::Printf(TEXT("%d"), Faction.NuclearStockpile), Faction.NuclearStockpile > 0 ? Orange : Dim);
+		Row(TEXT("AT WAR WITH"), Faction.AtWarWith.IsEmpty() ? FString(TEXT("NOBODY")) : FString::Join(Faction.AtWarWith, TEXT(" ")),
+			Faction.AtWarWith.IsEmpty() ? Green : Red);
+		Row(TEXT("ALLIES"), Faction.Allies.IsEmpty() ? FString(TEXT("NONE")) : FString::Join(Faction.Allies, TEXT(" ")), Cyan);
+	}
 }

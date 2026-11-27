@@ -1,6 +1,7 @@
 #include "EarthfallProjectile.h"
 #include "EarthOrbitPawn.h"
 #include "EarthfallPlanet.h"
+#include "EarthfallSandboxSubsystem.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -96,7 +97,8 @@ AEarthfallProjectile::AEarthfallProjectile()
 	Trail->SetTranslucentSortPriority(EffectSortPriority);
 }
 
-void AEarthfallProjectile::Launch(AEarthfallPlanet* InPlanet, AEarthOrbitPawn* InOwnerPawn, const FVector& InStart, const FEarthfallStrike& InStrike)
+void AEarthfallProjectile::Launch(AEarthfallPlanet* InPlanet, AEarthOrbitPawn* InOwnerPawn, const FVector& InStart, const FEarthfallStrike& InStrike,
+	float TravelOverride, bool bSurfaceArc)
 {
 	Planet = InPlanet;
 	OwnerPawn = InOwnerPawn;
@@ -105,7 +107,7 @@ void AEarthfallProjectile::Launch(AEarthfallPlanet* InPlanet, AEarthOrbitPawn* I
 	const FEarthfallWeaponSpec& Spec = EarthfallWeapons::Get(Strike.WeaponIndex);
 	Style = Spec.Projectile;
 	Accent = Spec.Color;
-	TravelSeconds = FMath::Max(Spec.TravelSeconds, 0.05f);
+	TravelSeconds = FMath::Max(TravelOverride > 0.0f ? TravelOverride : Spec.TravelSeconds, 0.05f);
 	PlanetCenter = InPlanet ? InPlanet->GetActorLocation() : FVector::ZeroVector;
 	PlanetRadius = InPlanet ? InPlanet->PlanetRadius : 100.0f;
 	const FProjectileLook& Look = LookFor(Style);
@@ -117,6 +119,17 @@ void AEarthfallProjectile::Launch(AEarthfallPlanet* InPlanet, AEarthOrbitPawn* I
 	Control = Style == EEarthfallProjectile::Beam
 		? Middle
 		: Middle + (Middle - PlanetCenter).GetSafeNormal() * Span * 0.10f;
+	if (bSurfaceArc)
+	{
+		// Ground to ground: put the control point just beyond where the tangents at
+		// launch and impact meet, so the whole arc stays clear of the planet.
+		const FVector From = (Start - PlanetCenter).GetSafeNormal();
+		const FVector To = (Strike.WorldLocation - PlanetCenter).GetSafeNormal();
+		const float HalfAngle = 0.5f * FMath::Acos(FMath::Clamp(static_cast<float>(FVector::DotProduct(From, To)), -1.0f, 1.0f));
+		const FVector Over = (From + To).GetSafeNormal(UE_SMALL_NUMBER, From);
+		Control = PlanetCenter + Over * (PlanetRadius / FMath::Max(FMath::Cos(HalfAngle), 0.25f) * 1.12f + 4.0f);
+	}
+	if (UEarthfallSandboxSubsystem* Sandbox = GetWorld() ? GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>() : nullptr) Sandbox->NotifyLaunch();
 
 	if (Style != EEarthfallProjectile::Beam)
 	{
@@ -332,4 +345,19 @@ void AEarthfallProjectile::UpdateTrail()
 		TrailUVs[Index * 2 + 1] = FVector2D(U, 1.0f);
 	}
 	Trail->UpdateMeshSection_LinearColor(0, Vertices, TrailNormals, TrailUVs, Colors, TrailTangents);
+}
+
+FVector AEarthfallProjectile::GetFlightPosition() const
+{
+	const float Alpha = GetProgress();
+	return PositionAt(FMath::Lerp(Alpha, Alpha * Alpha, 0.65f));
+}
+
+void AEarthfallProjectile::Intercept()
+{
+	if (bDetonated) return;
+	bDetonated = true;
+	AgeAtImpact = Age;
+	Hull->SetVisibility(false);
+	HeadGlow->SetVisibility(false);
 }

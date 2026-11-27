@@ -12,18 +12,18 @@ namespace
 /** After the cloud and atmosphere shells (10-12), before the fireball and ring (20). */
 constexpr int32 PlumeSortPriority = 14;
 /** The engine sphere is 100 units across. */
-constexpr float ShapeHalfExtent = 50.0f;
+constexpr float PlumeShapeHalfExtent = 50.0f;
 const FLinearColor AshColor(0.105f, 0.085f, 0.070f, 1.0f);
 const FLinearColor SteamColor(0.62f, 0.66f, 0.70f, 1.0f);
 const FLinearColor SprayColor(0.78f, 0.86f, 0.92f, 1.0f);
 const FLinearColor FoamColor(0.82f, 0.93f, 1.00f, 1.0f);
-const FTransform HiddenTransform(FQuat::Identity, FVector::ZeroVector, FVector::ZeroVector);
+const FTransform PlumeHiddenTransform(FQuat::Identity, FVector::ZeroVector, FVector::ZeroVector);
 
 /** A puff: a sphere scaled to (wide, wide, tall) world units, in the actor's space. */
 FTransform Puff(const FQuat& Spin, const FVector& Location, float Wide, float Tall)
 {
-	if (Wide < 0.01f || Tall < 0.01f) return HiddenTransform;
-	return FTransform(Spin, Location, FVector(Wide, Wide, Tall) / ShapeHalfExtent);
+	if (Wide < 0.01f || Tall < 0.01f) return PlumeHiddenTransform;
+	return FTransform(Spin, Location, FVector(Wide, Wide, Tall) / PlumeShapeHalfExtent);
 }
 }
 
@@ -110,7 +110,7 @@ void AEarthfallPlume::InitPlume(const FEarthfallPlumeParams& InParams)
 
 	ColumnMID = MakeMID(PuffMaterial, FLinearColor(1.3f, 0.95f, 5.5f, 0.22f));
 	Column->SetMaterial(0, ColumnMID);
-	ColumnTransforms.Init(HiddenTransform, ColumnPuffs);
+	ColumnTransforms.Init(PlumeHiddenTransform, ColumnPuffs);
 	Column->AddInstances(ColumnTransforms, false, false);
 	Column->SetVisibility(true);
 
@@ -131,7 +131,7 @@ void AEarthfallPlume::InitPlume(const FEarthfallPlumeParams& InParams)
 	{
 		SprayMID = MakeMID(PuffMaterial, FLinearColor(2.6f, 1.9f, 6.5f, 0.55f));
 		Spray->SetMaterial(0, SprayMID);
-		SprayTransforms.Init(HiddenTransform, SprayPuffs);
+		SprayTransforms.Init(PlumeHiddenTransform, SprayPuffs);
 		Spray->AddInstances(SprayTransforms, false, false);
 		Spray->SetVisibility(true);
 		if (FoamMaterial)
@@ -205,7 +205,7 @@ void AEarthfallPlume::UpdateShape()
 	const float CapRadius = Girth * (1.4f + 2.6f * Rise + 2.2f * Spread);
 	const float CapThickness = Girth * (0.9f + 0.7f * Rise);
 	Cap->SetRelativeLocation(FVector(0.0f, 0.0f, Height));
-	Cap->SetRelativeScale3D(FVector(CapRadius, CapRadius, CapThickness) / ShapeHalfExtent);
+	Cap->SetRelativeScale3D(FVector(CapRadius, CapRadius, CapThickness) / PlumeShapeHalfExtent);
 	if (CapMID) CapMID->SetVectorParameterValue(TEXT("Tint"), Tint(Body, 1.0f * Fade));
 	for (int32 Index = 0; Index < CapLobes; ++Index, ++Slot)
 	{
@@ -223,7 +223,7 @@ void AEarthfallPlume::UpdateShape()
 		// Embers under the cap: bright while the column is young, a dull red after.
 		const float Heat = (0.25f + 0.75f * FMath::Exp(-Age / 14.0f)) * Fade;
 		EmberGlow->SetRelativeLocation(FVector(0.0f, 0.0f, FMath::Max(Height - CapThickness * 0.75f, Height * 0.5f)));
-		EmberGlow->SetRelativeScale3D(FVector(Girth * 1.15f, Girth * 1.15f, CapThickness * 0.9f) / ShapeHalfExtent);
+		EmberGlow->SetRelativeScale3D(FVector(Girth * 1.15f, Girth * 1.15f, CapThickness * 0.9f) / PlumeShapeHalfExtent);
 		GlowMID->SetVectorParameterValue(TEXT("Tint"), FLinearColor(1.0f, 0.42f, 0.08f, 0.30f * Heat * Day));
 	}
 

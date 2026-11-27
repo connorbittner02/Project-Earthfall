@@ -239,6 +239,8 @@ struct FEarthfallStrike
 	float FalloutMultiplier = 1.0f;
 	/** The body and its kinetic energy in real units. */
 	FEarthfallImpactor Impactor;
+	/** Country ID of the nation that launched it; 0 = the player, -1 = nobody (nature). */
+	int32 AttackerCountry = 0;
 
 	/** Blast radius grows with the fourth root of yield so 100x is ~3x wider, not 100x. */
 	static FEarthfallStrike Make(const FVector& InWorldLocation, int32 InWeaponIndex,

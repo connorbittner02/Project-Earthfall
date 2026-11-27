@@ -28,7 +28,23 @@ public:
 	AEarthfallProjectile();
 	virtual void Tick(float DeltaSeconds) override;
 
-	void Launch(AEarthfallPlanet* InPlanet, AEarthOrbitPawn* InOwnerPawn, const FVector& InStart, const FEarthfallStrike& InStrike);
+	/**
+	 * TravelOverride > 0 replaces the weapon's flight time. bSurfaceArc lofts the
+	 * path over the planet for a launch from the ground, as one nation fires at another.
+	 */
+	void Launch(AEarthfallPlanet* InPlanet, AEarthOrbitPawn* InOwnerPawn, const FVector& InStart, const FEarthfallStrike& InStrike,
+		float TravelOverride = 0.0f, bool bSurfaceArc = false);
+
+	bool IsInFlight() const { return bLaunched && !bDetonated; }
+	/** 0 at launch, 1 at the target. */
+	float GetProgress() const { return FMath::Clamp(Age / TravelSeconds, 0.0f, 1.0f); }
+	const FEarthfallStrike& GetStrike() const { return Strike; }
+	float GetRemainingSeconds() const { return FMath::Max(TravelSeconds - Age, 0.0f); }
+	FVector GetFlightPosition() const;
+	/** Destroyed in flight: the munition vanishes, its trail fades and no strike is resolved. */
+	void Intercept();
+	/** Set once the defenders have had their one chance at this munition. */
+	bool bDefenseChecked = false;
 
 private:
 	static constexpr int32 TrailPoints = 48;

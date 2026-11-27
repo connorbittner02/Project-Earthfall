@@ -15,12 +15,12 @@ namespace
 /** Over the clouds, the plume and the fireball. */
 constexpr int32 EjectaSortPriority = 22;
 /** The engine sphere is 100 units across. */
-constexpr float SphereRadius = 50.0f;
+constexpr float EjectaSphereRadius = 50.0f;
 /** Fragments glow from launch for about this long before they go dark. */
 constexpr float CoolSeconds = 5.0f;
 /** Re-entry heating starts this far above the surface, as a fraction of the radius. */
 constexpr float ReentryAltitude = 0.07f;
-const FTransform HiddenTransform(FQuat::Identity, FVector::ZeroVector, FVector::ZeroVector);
+const FTransform EjectaHiddenTransform(FQuat::Identity, FVector::ZeroVector, FVector::ZeroVector);
 }
 
 AEarthfallEjecta::AEarthfallEjecta()
@@ -61,8 +61,8 @@ void AEarthfallEjecta::BeginPlay()
 		break;
 	}
 	Fragments.SetNum(MaxFragments);
-	RockTransforms.Init(HiddenTransform, MaxFragments);
-	StreakTransforms.Init(HiddenTransform, MaxFragments);
+	RockTransforms.Init(EjectaHiddenTransform, MaxFragments);
+	StreakTransforms.Init(EjectaHiddenTransform, MaxFragments);
 	if (EjectaMaterial)
 	{
 		// Shape = (falloff exponent, hot-core boost, noise scale, turbulence), as in fx.hlsl.
@@ -145,16 +145,16 @@ void AEarthfallEjecta::Tick(float DeltaSeconds)
 		FFragment& Fragment = Fragments[Index];
 		if (!Fragment.bAlive)
 		{
-			RockTransforms[Index] = HiddenTransform;
-			StreakTransforms[Index] = HiddenTransform;
+			RockTransforms[Index] = EjectaHiddenTransform;
+			StreakTransforms[Index] = EjectaHiddenTransform;
 			continue;
 		}
 		Fragment.Age += Step;
 		if (Fragment.Age < 0.0f)
 		{
 			// Staggered launch: not every fragment leaves in the same frame.
-			RockTransforms[Index] = HiddenTransform;
-			StreakTransforms[Index] = HiddenTransform;
+			RockTransforms[Index] = EjectaHiddenTransform;
+			StreakTransforms[Index] = EjectaHiddenTransform;
 			++Alive;
 			continue;
 		}
@@ -178,8 +178,8 @@ void AEarthfallEjecta::Tick(float DeltaSeconds)
 				++Seeds;
 				Planet->SeedSecondaryImpact(Planet->GetActorTransform().InverseTransformVectorNoScale(FromCenter).GetSafeNormal());
 			}
-			RockTransforms[Index] = HiddenTransform;
-			StreakTransforms[Index] = HiddenTransform;
+			RockTransforms[Index] = EjectaHiddenTransform;
+			StreakTransforms[Index] = EjectaHiddenTransform;
 			continue;
 		}
 		++Alive;
@@ -197,8 +197,8 @@ void AEarthfallEjecta::Tick(float DeltaSeconds)
 		const float Apparent = FMath::Clamp(static_cast<float>(FVector::Dist(Fragment.Position, Eye)) / 110.0f, 0.45f, 4.5f);
 		const float RockRadius = 0.030f * Apparent * Fragment.Size * Cooling * (1.0f - Reentry);
 		RockTransforms[Index] = RockRadius > 0.004f
-			? FTransform(Facing, Fragment.Position, FVector(RockRadius * (2.5f + Speed * 0.75f), RockRadius, RockRadius) / SphereRadius)
-			: HiddenTransform;
+			? FTransform(Facing, Fragment.Position, FVector(RockRadius * (2.5f + Speed * 0.75f), RockRadius, RockRadius) / EjectaSphereRadius)
+			: EjectaHiddenTransform;
 
 		if (Reentry > 0.02f)
 		{
@@ -206,11 +206,11 @@ void AEarthfallEjecta::Tick(float DeltaSeconds)
 			const float StreakLength = (0.9f + Speed * 0.40f) * Reentry * Fragment.Size * FMath::Sqrt(Apparent);
 			// The streak trails behind the fragment.
 			StreakTransforms[Index] = FTransform(Facing, Fragment.Position - Heading * StreakLength * 0.5f,
-				FVector(StreakLength * 0.5f, StreakRadius, StreakRadius) / SphereRadius);
+				FVector(StreakLength * 0.5f, StreakRadius, StreakRadius) / EjectaSphereRadius);
 		}
 		else
 		{
-			StreakTransforms[Index] = HiddenTransform;
+			StreakTransforms[Index] = EjectaHiddenTransform;
 		}
 	}
 
