@@ -1,6 +1,7 @@
 #include "EarthfallGameMode.h"
 #include "EarthOrbitPawn.h"
 #include "EarthfallPlanet.h"
+#include "EarthfallHUD.h"
 #include "Engine/DirectionalLight.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Engine/Engine.h"
@@ -10,6 +11,7 @@
 AEarthfallGameMode::AEarthfallGameMode()
 {
     DefaultPawnClass = AEarthOrbitPawn::StaticClass();
+    HUDClass = AEarthfallHUD::StaticClass();
 }
 
 void AEarthfallGameMode::BeginPlay()

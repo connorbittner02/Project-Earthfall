@@ -1,6 +1,8 @@
 #include "EarthfallPlanet.h"
 #include "EarthImpactFeedback.h"
 #include "ProceduralMeshComponent.h"
+#include "Materials/MaterialInterface.h"
+#include "UObject/ConstructorHelpers.h"
 
 namespace
 {
@@ -18,6 +20,9 @@ AEarthfallPlanet::AEarthfallPlanet()
     PlanetMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
     PlanetMesh->SetCollisionObjectType(ECC_WorldStatic);
     PlanetMesh->bUseAsyncCooking = true;
+    static ConstructorHelpers::FObjectFinder<UMaterialInterface> VertexColorMaterial(
+        TEXT("/Engine/EngineDebugMaterials/VertexColorMaterial.VertexColorMaterial"));
+    if (VertexColorMaterial.Succeeded()) PlanetMesh->SetMaterial(0, VertexColorMaterial.Object);
 }
 
 void AEarthfallPlanet::BeginPlay()
@@ -55,7 +60,17 @@ void AEarthfallPlanet::BuildPlanetMesh()
                                     FMath::Cos(Phi));
             BaseVertices.Add(Direction * PlanetRadius);
             UVs.Add(FVector2D(U, V));
-            VertexColors.Add(FLinearColor(0.07f, 0.22f, 0.36f, 1.0f));
+            const float Noise = 0.62f * FMath::PerlinNoise3D(Direction * 3.8f)
+                              + 0.26f * FMath::PerlinNoise3D(Direction * 8.1f)
+                              + 0.12f * FMath::PerlinNoise3D(Direction * 16.7f);
+            const float Polar = FMath::Abs(Direction.Z);
+            FLinearColor SurfaceColor(0.004f, 0.022f, 0.075f, 1.0f);
+            if (Polar > 0.88f) SurfaceColor = FLinearColor(0.18f, 0.28f, 0.32f, 1.0f);
+            else if (Noise > 0.02f && Noise < 0.08f) SurfaceColor = FLinearColor(0.20f, 0.12f, 0.035f, 1.0f);
+            else if (Noise >= 0.08f) SurfaceColor = Polar > 0.68f
+                ? FLinearColor(0.13f, 0.18f, 0.08f, 1.0f)
+                : FLinearColor(0.018f, 0.075f, 0.028f, 1.0f);
+            VertexColors.Add(SurfaceColor);
             Tangents.Add(FProcMeshTangent(-FMath::Sin(Theta), FMath::Cos(Theta), 0.0f));
         }
     }
@@ -76,6 +91,11 @@ void AEarthfallPlanet::BuildPlanetMesh()
     PlanetMesh->CreateMeshSection_LinearColor(0, DeformedVertices, Triangles, Normals, UVs, VertexColors, Tangents, true);
 }
 
+void AEarthfallPlanet::ResetPlanet()
+{
+    BuildPlanetMesh();
+}
+
 void AEarthfallPlanet::ApplyImpact(FVector WorldLocation, float Radius, float Energy)
 {
     const FVector LocalDirection = GetActorTransform().InverseTransformVectorNoScale(WorldLocation - GetActorLocation()).GetSafeNormal();
@@ -94,9 +114,25 @@ void AEarthfallPlanet::ApplyImpact(FVector WorldLocation, float Radius, float En
         const float SmoothFalloff = Falloff * Falloff * (3.0f - 2.0f * Falloff);
         const float NewRadius = FMath::Max(PlanetRadius * 0.55f, BaseVertices[i].Size() - Depth * SmoothFalloff);
         DeformedVertices[i] = Direction * NewRadius;
-        Normals[i] = DeformedVertices[i].GetSafeNormal();
         const float Heat = SmoothFalloff;
-        VertexColors[i] = FLinearColor(0.07f + Heat * 0.8f, 0.22f - Heat * 0.17f, 0.36f - Heat * 0.30f, 1.0f);
+        VertexColors[i] = FLinearColor(0.018f + Heat * 0.78f, 0.075f - Heat * 0.06f, 0.028f - Heat * 0.02f, 1.0f);
+    }
+
+    for (FVector& Normal : Normals) Normal = FVector::ZeroVector;
+    for (int32 i = 0; i < Triangles.Num(); i += 3)
+    {
+        const int32 A = Triangles[i];
+        const int32 B = Triangles[i + 1];
+        const int32 C = Triangles[i + 2];
+        const FVector FaceNormal = FVector::CrossProduct(
+            DeformedVertices[B] - DeformedVertices[A], DeformedVertices[C] - DeformedVertices[A]);
+        Normals[A] += FaceNormal;
+        Normals[B] += FaceNormal;
+        Normals[C] += FaceNormal;
+    }
+    for (int32 i = 0; i < Normals.Num(); ++i)
+    {
+        Normals[i] = Normals[i].IsNearlyZero() ? BaseVertices[i].GetSafeNormal() : Normals[i].GetSafeNormal();
     }
 
     // Recreate the section so the collision used by the next click trace follows the crater.

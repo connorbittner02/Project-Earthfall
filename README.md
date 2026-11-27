@@ -4,10 +4,11 @@ An Unreal Engine 5.8 prototype for an Earth-scale destruction sandbox.
 
 ## Current prototype
 
-- Procedurally generated spherical mesh with vertex displacement at impact sites
+- Procedurally generated spherical globe with stylized land, ocean, and polar regions
 - Orbit camera with mouse look and wheel zoom
-- Click-to-strike interaction with a flash and expanding shockwave
-- Per impact shockwave feedback and an exposed-rock color at impact sites
+- Three selectable strike types with different crater sizes, strength, and cooldowns
+- Click-to-strike craters, exposed-rock colors, flash, and expanding torus shockwave
+- On-screen aiming, target lock, weapon selection, cooldown, impact counter, and planet reset
 
 The planet currently uses a moderate resolution CPU mesh for this first deformation prototype. It is not yet the GPU SDF terrain system described in the design brief.
 
@@ -16,7 +17,7 @@ The planet currently uses a moderate resolution CPU mesh for this first deformat
 1. Install Unreal Engine 5.8 with its C++ toolchain.
 2. Open Earthfall.uproject.
 3. Allow Unreal to build the Earthfall module.
-4. Press Play. Drag the mouse to orbit, use the wheel to zoom, and click the planet to strike.
+4. Press Play. Move the mouse to orbit, use the wheel to zoom, press 1, 2, or 3 to select a weapon, click the planet to strike, and press R to restore it.
 
 ## Build from PowerShell
 
@@ -34,6 +35,10 @@ The planet currently uses a moderate resolution CPU mesh for this first deformat
 6. **Scale and performance:** profiling, quality tiers, and platform targets.
 
 Runtime GPU SDF carving, live casualty estimates, and photorealistic data layers are not implemented yet. They require a dedicated rendering/data design and measurable performance targets before adoption.
+
+## Playable demo package
+
+The Windows demo build is archived to the separate outputs/EarthfallDemo folder. Launch Earthfall.exe in its Windows subfolder. The package targets Windows 64-bit Development and includes the project's cooked content.
 
 ## Collaboration with Claude and Gemini
 

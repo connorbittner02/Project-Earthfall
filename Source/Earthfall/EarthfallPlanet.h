@@ -18,6 +18,9 @@ public:
     UFUNCTION(BlueprintCallable, Category="Earthfall|Impact")
     void ApplyImpact(FVector WorldLocation, float Radius, float Energy);
 
+    UFUNCTION(BlueprintCallable, Category="Earthfall|Planet")
+    void ResetPlanet();
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Earthfall|Planet")
     float PlanetRadius = 100.0f;
 

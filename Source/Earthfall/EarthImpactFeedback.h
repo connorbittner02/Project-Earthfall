@@ -2,7 +2,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Components/PointLightComponent.h"
-#include "Components/SphereComponent.h"
+#include "ProceduralMeshComponent.h"
 #include "EarthImpactFeedback.generated.h"
 
 UCLASS()
@@ -14,7 +14,9 @@ public:
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<class UPointLightComponent> Flash;
     UPROPERTY(VisibleAnywhere)
-    TObjectPtr<class USphereComponent> Ring;
+    TObjectPtr<class UProceduralMeshComponent> Ring;
     float Age = 0.0f;
     virtual void Tick(float DeltaSeconds) override;
+private:
+    void UpdateRing(float Alpha);
 };
