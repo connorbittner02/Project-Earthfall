@@ -126,8 +126,8 @@ void AEarthfallTerrainStreamer::SpawnTerrain()
 	// From low orbit the horizon is thousands of kilometres off; fog culling
 	// would drop those tiles and leave a blank band under the limb.
 	Tiles->EnableFogCulling = false;
-	// Cesium World Terrain carries a water mask, which gives the sea a lit, moving surface.
-	Tiles->SetEnableWaterMask(true);
+	// No Cesium water mask: its mirror surface reflects the sky light's stock
+	// clouds. The destruction decal shades open water with the orbital ocean model.
 	Tiles->FinishSpawning(PlanetTransform);
 
 	UCesiumIonRasterOverlay* Imagery = NewObject<UCesiumIonRasterOverlay>(Tiles, TEXT("BingAerialImagery"));

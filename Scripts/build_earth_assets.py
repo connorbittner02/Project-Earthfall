@@ -330,7 +330,7 @@ def build_clouds(black):
     finish_material(material, MATERIAL_DIR, "M_EarthClouds")
 
 
-def build_terrain_decal(black, night):
+def build_terrain_decal(black, night, masks):
     """Deferred decal that paints the destruction simulations onto streamed terrain."""
     material = create_material(MATERIAL_DIR, "M_TerrainDestruction")
     material.set_editor_property("material_domain", unreal.MaterialDomain.MD_DEFERRED_DECAL)
@@ -353,6 +353,7 @@ def build_terrain_decal(black, night):
             ("WaveTex", texture_object(material, "TsunamiRT", black, y + 480), ""),
             ("FireTex", texture_object(material, "FireMaskRT", black, y + 600), ""),
             ("NightTex", texture_object(material, "NightTexture", night, y + 660), ""),
+            ("MasksTex", texture_object(material, "MasksTexture", masks, y + 680), ""),
             ("Sun", vector_parameter(material, "SunDirection", (1.0, 0.0, 0.0, 0.0), y + 700), "RGB"),
             ("Time", node(material, unreal.MaterialExpressionTime, -900, y + 720), ""),
             ("Terrain", vector_parameter(material, "Terrain", (0.0, 0.0, 0.0, 0.0), y + 780), "RGBA"),
@@ -559,7 +560,7 @@ def main():
     build_surface(day, night, normal, masks, countries, black)
     build_clouds(black)
     build_atmosphere()
-    build_terrain_decal(black, night)
+    build_terrain_decal(black, night, masks)
     build_space(sky)
     build_sun("M_EarthSun", (0.0, 42.0, 0.0, 0.0), additive=False)
     build_sun("M_SunCorona", (1.0, 1.0, 0.0, 0.0), additive=True)

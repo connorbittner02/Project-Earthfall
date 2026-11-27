@@ -143,13 +143,25 @@ What it took beyond the first build:
 - Capture holds each low view for 5 to 12 seconds so tiles can refine. A first visit to a
   place is blurry for a few seconds; `cesium-request-cache.sqlite` makes revisits fast.
 
+Second pass, same day:
+
+- The destruction decal is now confirmed on terrain. An earlier crater frame was shot from
+  low orbit by mistake (the orbit floor had not dropped yet) and showed the soot layer from
+  above, not the decal. `28-terrain-crater` now descends in two steps and shows charred
+  ground with the imagery still readable through it, ember streaks and the magma field.
+- Decal layers tint instead of cover, and crater slopes are shaded against the sun from
+  the crater height field.
+- Cesium's water mask is off. Open water is shaded by the decal with the orbital ocean
+  model: deep blue, GGX sunglint and a grazing sky reflection (`23-low-orbit-ocean`). The
+  orbital water mask is about 5 km per texel, so only water well clear of the coast is
+  treated; the shallows keep the streamed imagery's colour.
+
 Still wrong or unfinished:
 
-- Open ocean on tiles is a flat grey-blue that mirrors the cubemap's clouds
-  (`23-low-orbit-ocean`). It loses the sunglint and bathymetry colour of the orbital ocean.
-- At the mantle crater the decal covers the imagery with one flat ejecta colour. The
-  layers need to tint the terrain, not replace it, and crater relief is still colour only.
 - Tiles get no atmospheric haze of their own, so distant terrain is too crisp.
+- Crater relief on tiles is shading only; the terrain mesh is not displaced.
+- Near coasts the sea is the streamed imagery's flat dark navy, with no glint.
 - Decal alignment against craters seen from orbit has not been checked side by side.
+- Tsunami foam and flooding on tiles have not been captured.
 - Aiming and firing from below 1.035 R has not been played by hand.
 - Cesium logs a warning about "Enable World Bounds Checks".

@@ -149,9 +149,11 @@ void AEarthfallCaptureDirector::BuildScript()
 	At(56.8f, [=]() { View(-36.0f, -12.0f, 215.0f); });
 	At(58.6f, [this]() { Shot(TEXT("21-pom-crater")); });
 	// Down onto the mantle crater, to see the destruction on streamed terrain.
-	At(58.7f, [=, this]() { if (AEarthOrbitPawn* P = Pawn()) P->SetHudMode(EEarthfallHudMode::Hidden); View(-48.0f, -18.0f, 100.6f); });
-	At(66.0f, [this]() { Shot(TEXT("28-terrain-crater")); });
-	At(67.0f, [this]() { Finish(); });
+	At(58.7f, [=, this]() { if (AEarthOrbitPawn* P = Pawn()) P->SetHudMode(EEarthfallHudMode::Hidden); View(-48.0f, -18.0f, 103.5f); });
+	// The floor drops only once terrain is ready again, so descend in a second step.
+	At(61.5f, [=]() { View(-48.0f, -18.0f, 100.6f); });
+	At(69.0f, [this]() { Shot(TEXT("28-terrain-crater")); });
+	At(70.0f, [this]() { Finish(); });
 
 	Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
 }
