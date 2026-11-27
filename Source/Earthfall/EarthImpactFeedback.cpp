@@ -188,9 +188,9 @@ void AEarthImpactFeedback::UpdateFireball()
 		const float Radius = bImplosion
 			? FireballRadius * FMath::Sqrt(FMath::Max(Heat, 0.0f)) * (0.35f + 0.65f * (1.0f - FMath::Exp(-Age * 14.0f)))
 			: FireballRadius * (0.25f + 0.75f * (1.0f - FMath::Exp(-Age * 9.0f))) * (1.0f + 0.25f * U);
-		const FLinearColor White(1.0f, 0.95f, 0.85f);
+		const FLinearColor HotWhite(1.0f, 0.95f, 0.85f);
 		const FLinearColor Tone = Heat > 0.7f
-			? FMath::Lerp(MidTones[Params.WeaponIndex], White, (Heat - 0.7f) / 0.3f)
+			? FMath::Lerp(MidTones[Params.WeaponIndex], HotWhite, (Heat - 0.7f) / 0.3f)
 			: FMath::Lerp(EndTones[Params.WeaponIndex], MidTones[Params.WeaponIndex], Heat / 0.7f);
 		const float Intensity = (bNuclear ? 6.0f : 3.2f) * YieldGain * FMath::Pow(Heat, 1.5f);
 		Fireball->SetWorldLocation(GroundZero + Params.Normal * FireballRadius * 0.25f * U);

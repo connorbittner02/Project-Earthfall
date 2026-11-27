@@ -284,7 +284,7 @@ void UEarthfallPopulationSubsystem::RefreshPopulationTotals()
 		const double CasualtyFraction = 1.0 - State.LivingPopulation / State.InitialPopulation;
 		const double RefugeeFraction = State.Displaced / State.InitialPopulation;
 		const double Blackout = 1.0 - State.GridSum / State.CellCount;
-		const double Stress = CasualtyFraction + 0.35 * RefugeeFraction + 0.25 * Blackout;
+		const double Stress = CasualtyFraction + 0.35 * RefugeeFraction + 0.25 * Blackout + State.BorderStress;
 		const EEarthfallStability Next = Stress < 0.03 ? EEarthfallStability::Stable
 			: (Stress < 0.15 ? EEarthfallStability::Emergency
 			: (Stress < 0.40 ? EEarthfallStability::MartialLaw : EEarthfallStability::Collapsed));
@@ -959,4 +959,17 @@ void UEarthfallPopulationSubsystem::RepairRegion(const FVector& LocalDirection, 
 		return FVector::DotProduct(Direction, Centre) >= FMath::Cos(RadiusRadians);
 	});
 	RefreshPopulationTotals();
+}
+
+void UEarthfallPopulationSubsystem::SetBorderStress(const TMap<int32, float>& StressByCountry)
+{
+	bool bChanged = false;
+	for (int32 Id = 1; Id < CountryStates.Num(); ++Id)
+	{
+		const float* Value = StressByCountry.Find(Id);
+		const float Next = Value ? FMath::Clamp(*Value, 0.0f, 0.35f) : 0.0f;
+		bChanged |= !FMath::IsNearlyEqual(Next, CountryStates[Id].BorderStress, 0.005f);
+		CountryStates[Id].BorderStress = Next;
+	}
+	if (bChanged) RefreshPopulationTotals();
 }

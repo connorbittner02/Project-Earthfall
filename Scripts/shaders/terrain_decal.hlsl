@@ -15,6 +15,7 @@ float4 Main(float3 RelPos, float3 CamPos,
             Texture2D FireTex, SamplerState FireTexSampler,
             Texture2D NightTex, SamplerState NightTexSampler,
             Texture2D MasksTex, SamplerState MasksTexSampler,
+            Texture2D PlagueTex, SamplerState PlagueTexSampler,
             float3 Sun, float Time, float4 Terrain, float4 Atmos, float4 Column, float Mode)
 {
     float3 n = normalize(RelPos + CamPos);
@@ -64,6 +65,21 @@ float4 Main(float3 RelPos, float3 CamPos,
     float haze = (1.0 - exp(-length(RelPos) / (4.0 + 9.0 * hazeAltitude))) * 0.75;
     float3 hazeCol = lerp(float3(0.62, 0.24, 0.09), float3(0.40, 0.58, 0.95), smoothstep(0.35, 0.92, Atmos.x)) * 0.55;
 
+    // Bio mask: R = infection, G = rage or insurgency. Up close the plague is a
+    // sickly ground haze and the fighting is fires a few kilometres across under
+    // drifting smoke.
+    float2 Bio = Texture2DSampleLevel(PlagueTex, PlagueTexSampler, uv, 0).rg;
+    float infection = saturate(Bio.r);
+    float rage = saturate(Bio.g);
+    float bioHaze = smoothstep(0.02, 0.5, infection) * (0.45 + 0.55 * (VNoise(n * 170.0 + float3(Time * 0.05, 0.0, Time * 0.03)) * 0.5 + VNoise(n * 900.0 - float3(0.0, Time * 0.07, 0.0)) * 0.5));
+    // Fires: small cores a kilometre or two across, broken up by a fast flame
+    // noise so they flicker and never read as flat discs.
+    float fireField = VNoise(n * 3400.0 + float3(0.0, 0.0, floor(Time * 0.35) * 7.0));
+    float rageFlames = 0.45 + 0.55 * VNoise(n * 26000.0 + float3(Time * 3.0, 0.0, -Time * 2.0));
+    float hotspot = rage * smoothstep(0.74, 0.90, fireField);
+    float fireCore = rage * smoothstep(0.84, 0.95, fireField);
+    float rageSmoke = rage * smoothstep(0.35, 0.80, VNoise(n * 700.0 + float3(Time * 0.04, 0.0, 0.0)));
+
     if (Mode < 0.5 || Mode > 1.5)
     {
         // Layers composited front to back in the surface shader's order.
@@ -101,6 +117,9 @@ float4 Main(float3 RelPos, float3 CamPos,
         // Deep ocean blue under the glint added in the emissive pass.
         x = water * 0.80;                        col = lerp(col, float3(0.010, 0.040, 0.105), x); a = a + x - a * x;
         x = saturate(crest * 0.7);               col = lerp(col, float3(0.74, 0.95, 1.00), x); a = a + x - a * x;
+        x = bioHaze * 0.66;                      col = lerp(col, float3(0.19, 0.36, 0.05), x); a = a + x - a * x;
+        x = rageSmoke * 0.68;                    col = lerp(col, float3(0.030, 0.026, 0.024), x); a = a + x - a * x;
+        x = hotspot * 0.95;                      col = lerp(col, float3(0.012, 0.008, 0.006), x); a = a + x - a * x;
         x = ColumnShadow(n, Sun, Column, float4(0.0, 0.0, 0.0, Column.w)) * 0.55;
                                                  col = lerp(col, float3(0.0, 0.0, 0.0), x); a = a + x - a * x;
         // Nuclear winter. Climate.x pushes the frost line from the poles toward the
@@ -151,6 +170,10 @@ float4 Main(float3 RelPos, float3 CamPos,
     float denom = NdH * NdH * (a2 - 1.0) + 1.0;
     float glint = a2 / (3.14159265 * denom * denom) * (0.02 + 0.98 * pow(1.0 - saturate(dot(V, H)), 5.0)) * 0.25 / max(0.10, max(NdL, NdV));
     emissive += (sunCol * glint * NdL * 2.6 + float3(0.20, 0.38, 0.75) * pow(1.0 - saturate(dot(n, V)), 5.0) * 0.30) * day * water;
+
+    // Bio-cloud glow, and fires where the fighting is.
+    emissive += lerp(float3(0.42, 0.16, 0.55), float3(0.30, 0.62, 0.10), smoothstep(0.10, 0.45, infection)) * bioHaze * 0.40;
+    emissive += (float3(1.00, 0.22, 0.03) * hotspot * 3.0 + float3(1.00, 0.72, 0.25) * fireCore * 9.0) * rageFlames;
 
     // City lights: streamed imagery is a daytime photograph, so the night side
     // gets the Black Marble lights back, broken into points as in low orbit, and

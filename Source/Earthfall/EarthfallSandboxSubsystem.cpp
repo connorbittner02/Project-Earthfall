@@ -6,6 +6,7 @@
 #include "EarthfallTypes.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "GameFramework/PlayerController.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogEarthfallSandbox, Log, All);
 
@@ -17,6 +18,12 @@ constexpr int32 MaxUnits = 24;
 constexpr int32 DebrisCount = 900;
 /** Angular speed of a strike group, radians per second (a brisk few seconds per ocean). */
 constexpr float UnitSpeed = 0.035f;
+constexpr float AirWingSpeed = 0.075f;
+/** The navigation grid: 1.5 degree cells. */
+constexpr int32 NavWidth = 240;
+constexpr int32 NavHeight = 120;
+/** A fleet holds this far or nearer from a capital it can reach; further inland calls for an air wing. */
+constexpr float FleetReach = 0.40f;
 
 struct FMajorPower
 {
@@ -94,6 +101,8 @@ void UEarthfallSandboxSubsystem::ResetSandbox()
 	InterceptCount = 0;
 	BioZones.Reset();
 	Routes.Reset();
+	BorderCrises.Reset();
+	if (UEarthfallPopulationSubsystem* People = Population()) People->SetBorderStress(TMap<int32, float>());
 	InfectedNow = 0.0;
 	CuredTotal = 0.0;
 	PlagueDead = 0.0;
@@ -214,6 +223,19 @@ void UEarthfallSandboxSubsystem::MakePeace(int32 Faction)
 	Factions[Faction].AtWar.Reset();
 	PendingJoins.RemoveAll([Faction](const FPendingJoin& Join) { return Join.Ally == Faction || Join.Enemy == Faction; });
 	Units.RemoveAll([Faction](const FUnit& Unit) { return Unit.Owner == Faction || Unit.Target == Faction; });
+	// Missiles already in the air from anyone now at peace are destroyed in flight.
+	int32 Recalled = 0;
+	for (TActorIterator<AEarthfallProjectile> It(GetWorld()); It; ++It)
+	{
+		const int32* Launcher = FactionByCountry.Find(It->GetStrike().AttackerCountry);
+		if (It->IsInFlight() && Launcher && Factions[*Launcher].AtWar.IsEmpty())
+		{
+			It->Intercept();
+			++Recalled;
+		}
+	}
+	UE_LOG(LogEarthfallSandbox, Display, TEXT("EARTHFALL_PEACE %s stands down: %d wars still active worldwide, %d missiles destroyed in flight"),
+		*Factions[Faction].Code, GetActiveWarCount(), Recalled);
 }
 
 bool UEarthfallSandboxSubsystem::GetFactionInfo(int32 CountryId, FEarthfallFactionInfo& OutInfo) const
@@ -285,39 +307,45 @@ void UEarthfallSandboxSubsystem::Tick(float DeltaTime)
 	TickDebrisField(DeltaTime);
 	TickBio(DeltaTime);
 	TickTraffic(DeltaTime);
+	TickBorders(DeltaTime);
 	BuildMarkers();
 }
 
-void UEarthfallSandboxSubsystem::LaunchMissile(FFaction& From, const FFaction& At, bool bNuclear)
+void UEarthfallSandboxSubsystem::FireMissile(const FVector& FromDirection, float FromAltitudeScale, const FVector& AimDirection, int32 AttackerCountry, bool bNuclear)
 {
 	AEarthfallPlanet* Planet = FindPlanet();
 	if (!Planet || !GetWorld()) return;
-	// Aimed at the enemy capital, landing anywhere within a few hundred kilometres of it.
-	FVector TangentA;
-	FVector TangentB;
-	At.Capital.FindBestAxisVectors(TangentA, TangentB);
-	const float Angle = FMath::FRandRange(0.0f, 2.0f * PI);
-	const FVector Aim = (At.Capital + (TangentA * FMath::Cos(Angle) + TangentB * FMath::Sin(Angle)) * FMath::FRandRange(0.01f, 0.09f)).GetSafeNormal();
 	const FTransform& Transform = Planet->GetActorTransform();
-	const FVector Start = Planet->GetActorLocation() + Transform.TransformVectorNoScale(From.Capital) * Planet->PlanetRadius * 1.004f;
-	const FVector Impact = Planet->GetActorLocation() + Transform.TransformVectorNoScale(Aim) * Planet->PlanetRadius;
+	const FVector Start = Planet->GetActorLocation() + Transform.TransformVectorNoScale(FromDirection) * Planet->PlanetRadius * FromAltitudeScale;
+	const FVector Impact = Planet->GetActorLocation() + Transform.TransformVectorNoScale(AimDirection) * Planet->PlanetRadius;
 
 	// Conventional salvos are small kinetic warheads; a nuclear one is a
 	// quarter-yield, half-size weapon, so a war scars regions rather than ending the world at once.
 	FEarthfallStrike Strike = bNuclear
 		? FEarthfallStrike::Make(Impact, EarthfallWeapons::Nuclear, 0.25f, 0.5f, 1.0f)
 		: FEarthfallStrike::Make(Impact, 0, 1.0f, 0.5f, 0.0f);
-	Strike.AttackerCountry = From.CountryId;
+	Strike.AttackerCountry = AttackerCountry;
 
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	if (AEarthfallProjectile* Missile = GetWorld()->SpawnActor<AEarthfallProjectile>(AEarthfallProjectile::StaticClass(), Start, FRotator::ZeroRotator, Params))
 	{
-		const float Range = FMath::Acos(FMath::Clamp(static_cast<float>(FVector::DotProduct(From.Capital, Aim)), -1.0f, 1.0f));
-		Missile->Launch(Planet, nullptr, Start, Strike, 2.2f + Range * 2.4f, true);
-		++From.Exchanges;
-		if (bNuclear) --From.NuclearStockpile;
+		const float Range = FMath::Acos(FMath::Clamp(static_cast<float>(FVector::DotProduct(FromDirection, AimDirection)), -1.0f, 1.0f));
+		Missile->Launch(Planet, nullptr, Start, Strike, 1.6f + Range * 2.8f, true);
 	}
+}
+
+void UEarthfallSandboxSubsystem::LaunchMissile(FFaction& From, const FFaction& At, bool bNuclear)
+{
+	// Aimed at the enemy capital, landing anywhere within a few hundred kilometres of it.
+	FVector TangentA;
+	FVector TangentB;
+	At.Capital.FindBestAxisVectors(TangentA, TangentB);
+	const float Angle = FMath::FRandRange(0.0f, 2.0f * PI);
+	const FVector Aim = (At.Capital + (TangentA * FMath::Cos(Angle) + TangentB * FMath::Sin(Angle)) * FMath::FRandRange(0.01f, 0.09f)).GetSafeNormal();
+	FireMissile(From.Capital, 1.004f, Aim, From.CountryId, bNuclear);
+	++From.Exchanges;
+	if (bNuclear) --From.NuclearStockpile;
 }
 
 void UEarthfallSandboxSubsystem::TickWars(float DeltaTime)
@@ -387,18 +415,139 @@ void UEarthfallSandboxSubsystem::TickWars(float DeltaTime)
 	}
 }
 
-void UEarthfallSandboxSubsystem::SpawnUnit(int32 Owner, int32 Target, const FVector& From)
+void UEarthfallSandboxSubsystem::BuildWaterGrid()
 {
-	if (Units.Num() >= MaxUnits || !Factions.IsValidIndex(Target)) return;
-	FUnit& Unit = Units.AddDefaulted_GetRef();
-	Unit.Direction = From.GetSafeNormal();
+	const UEarthfallPopulationSubsystem* People = Population();
+	if (!People || People->GetCountryCount() == 0) return;
+	WaterGrid.SetNumZeroed(NavWidth * NavHeight);
+	for (int32 Y = 0; Y < NavHeight; ++Y)
+	{
+		const double Latitude = 90.0 - (Y + 0.5) * 180.0 / NavHeight;
+		// Fleets stay out of the polar pack.
+		if (FMath::Abs(Latitude) > 76.0) continue;
+		for (int32 X = 0; X < NavWidth; ++X)
+		{
+			const double Longitude = -180.0 + (X + 0.5) * 360.0 / NavWidth;
+			WaterGrid[Y * NavWidth + X] = People->GetCountryAtDirection(EarthfallSolar::DirectionFromLatLon(Latitude, Longitude)) == 0 ? 1 : 0;
+		}
+	}
+}
+
+bool UEarthfallSandboxSubsystem::FindSeaRoute(const FVector& From, const FVector& To, TArray<FVector>& OutPath) const
+{
+	OutPath.Reset();
+	if (WaterGrid.Num() != NavWidth * NavHeight) return false;
+	auto CellDirection = [](int32 Cell)
+	{
+		return EarthfallSolar::DirectionFromLatLon(90.0 - (Cell / NavWidth + 0.5) * 180.0 / NavHeight, -180.0 + (Cell % NavWidth + 0.5) * 360.0 / NavWidth);
+	};
+	// Put to sea at the open water nearest the starting point.
+	int32 StartCell = -1;
+	double BestStart = -2.0;
+	for (int32 Cell = 0; Cell < WaterGrid.Num(); ++Cell)
+	{
+		if (!WaterGrid[Cell]) continue;
+		const double Near = FVector::DotProduct(CellDirection(Cell), From);
+		if (Near > BestStart)
+		{
+			BestStart = Near;
+			StartCell = Cell;
+		}
+	}
+	if (StartCell < 0) return false;
+
+	// Dijkstra over every water cell this sea connects to. The station is the
+	// reachable cell nearest the target, so a landlocked sea is never chosen.
+	TArray<float> Cost;
+	Cost.Init(TNumericLimits<float>::Max(), WaterGrid.Num());
+	TArray<int32> Parent;
+	Parent.Init(-1, WaterGrid.Num());
+	TArray<TPair<float, int32>> Open;
+	auto Cheaper = [](const TPair<float, int32>& A, const TPair<float, int32>& B) { return A.Key < B.Key; };
+	Cost[StartCell] = 0.0f;
+	Open.HeapPush(TPair<float, int32>(0.0f, StartCell), Cheaper);
+	int32 StationCell = StartCell;
+	double BestStation = FVector::DotProduct(CellDirection(StartCell), To);
+	while (!Open.IsEmpty())
+	{
+		TPair<float, int32> Node;
+		Open.HeapPop(Node, Cheaper);
+		const int32 Cell = Node.Value;
+		if (Node.Key > Cost[Cell]) continue;
+		const FVector Here = CellDirection(Cell);
+		const double Near = FVector::DotProduct(Here, To);
+		if (Near > BestStation)
+		{
+			BestStation = Near;
+			StationCell = Cell;
+		}
+		const int32 X = Cell % NavWidth;
+		const int32 Y = Cell / NavWidth;
+		for (int32 DY = -1; DY <= 1; ++DY)
+		{
+			const int32 NY = Y + DY;
+			if (NY < 0 || NY >= NavHeight) continue;
+			for (int32 DX = -1; DX <= 1; ++DX)
+			{
+				if (DX == 0 && DY == 0) continue;
+				const int32 Next = NY * NavWidth + (X + DX + NavWidth) % NavWidth;
+				if (!WaterGrid[Next]) continue;
+				// A diagonal may not cut the corner of a coast.
+				if (DX != 0 && DY != 0 && (!WaterGrid[Y * NavWidth + (X + DX + NavWidth) % NavWidth] || !WaterGrid[NY * NavWidth + X])) continue;
+				const float Step = FMath::Acos(FMath::Clamp(static_cast<float>(FVector::DotProduct(Here, CellDirection(Next))), -1.0f, 1.0f));
+				if (Cost[Cell] + Step < Cost[Next])
+				{
+					Cost[Next] = Cost[Cell] + Step;
+					Parent[Next] = Cell;
+					Open.HeapPush(TPair<float, int32>(Cost[Next], Next), Cheaper);
+				}
+			}
+		}
+	}
+	// Too far inland to bombard from the sea.
+	if (BestStation < FMath::Cos(FleetReach)) return false;
+	for (int32 Cell = StationCell; Cell >= 0; Cell = Parent[Cell]) OutPath.Insert(CellDirection(Cell), 0);
+	return OutPath.Num() > 0;
+}
+
+bool UEarthfallSandboxSubsystem::SpawnUnit(int32 Owner, int32 Target, const FVector& From, int32 Mode)
+{
+	if (Units.Num() >= MaxUnits || !Factions.IsValidIndex(Target)) return false;
+	if (WaterGrid.IsEmpty()) BuildWaterGrid();
+	FUnit Unit;
 	Unit.Owner = Owner;
 	Unit.Target = Target;
+	Unit.Direction = From.GetSafeNormal();
+	if (Mode != 2 && FindSeaRoute(Unit.Direction, Factions[Target].Capital, Unit.Path))
+	{
+		Unit.bNaval = true;
+		Unit.Direction = Unit.Path[0];
+	}
+	else if (Mode == 1)
+	{
+		return false;
+	}
+	Units.Add(MoveTemp(Unit));
+	return true;
+}
+
+int32 UEarthfallSandboxSubsystem::GetFleetCount() const
+{
+	int32 Count = 0;
+	for (const FUnit& Unit : Units) Count += Unit.bNaval ? 1 : 0;
+	return Count;
+}
+
+int32 UEarthfallSandboxSubsystem::GetActiveWarCount() const
+{
+	int32 Count = 0;
+	for (const FFaction& Faction : Factions) Count += Faction.AtWar.Num();
+	return Count / 2;
 }
 
 void UEarthfallSandboxSubsystem::TickUnits(float DeltaTime)
 {
-	AEarthfallPlanet* Planet = FindPlanet();
+	const UEarthfallPopulationSubsystem* People = Population();
 	for (int32 Index = Units.Num() - 1; Index >= 0; --Index)
 	{
 		FUnit& Unit = Units[Index];
@@ -407,26 +556,51 @@ void UEarthfallSandboxSubsystem::TickUnits(float DeltaTime)
 			Units.RemoveAtSwap(Index);
 			continue;
 		}
-		const FVector& Goal = Factions[Unit.Target].Capital;
-		const float Range = FMath::Acos(FMath::Clamp(static_cast<float>(FVector::DotProduct(Unit.Direction, Goal)), -1.0f, 1.0f));
-		if (Range > 0.13f)
+		const FVector& Capital = Factions[Unit.Target].Capital;
+		bool bOnStation = false;
+		if (Unit.bNaval)
 		{
-			Unit.Direction = SlerpDirection(Unit.Direction, Goal, UnitSpeed * DeltaTime);
-			continue;
+			// Waypoint to waypoint, every one of them open water.
+			if (Unit.PathIndex < Unit.Path.Num())
+			{
+				const FVector& Waypoint = Unit.Path[Unit.PathIndex];
+				Unit.Direction = SlerpDirection(Unit.Direction, Waypoint, UnitSpeed * DeltaTime);
+				if (FVector::DotProduct(Unit.Direction, Waypoint) > 0.99996) ++Unit.PathIndex;
+			}
+			bOnStation = Unit.PathIndex >= Unit.Path.Num();
 		}
-		// On station off the enemy capital: three volleys, then the group is spent.
+		else
+		{
+			const float Range = FMath::Acos(FMath::Clamp(static_cast<float>(FVector::DotProduct(Unit.Direction, Capital)), -1.0f, 1.0f));
+			bOnStation = Range <= 0.11f;
+			if (!bOnStation) Unit.Direction = SlerpDirection(Unit.Direction, Capital, AirWingSpeed * DeltaTime);
+		}
+		if (!bOnStation) continue;
+
 		Unit.FireTimer -= DeltaTime;
-		if (Unit.FireTimer > 0.0f || !Planet) continue;
-		Unit.FireTimer = 2.2f;
+		if (Unit.FireTimer > 0.0f) continue;
+		Unit.FireTimer = 1.8f;
+		FVector Aim = Capital;
+		if (Unit.bNaval && People)
+		{
+			// A fleet shells the coast in front of it: the first land on the line
+			// toward the capital, and a little way inland of that.
+			for (float Along = 0.012f; Along < FleetReach; Along += 0.012f)
+			{
+				const FVector Probe = SlerpDirection(Unit.Direction, Capital, Along);
+				if (People->GetCountryAtDirection(Probe) != 0)
+				{
+					Aim = SlerpDirection(Unit.Direction, Capital, Along + 0.025f);
+					break;
+				}
+			}
+		}
 		FVector TangentA;
 		FVector TangentB;
-		Goal.FindBestAxisVectors(TangentA, TangentB);
+		Aim.FindBestAxisVectors(TangentA, TangentB);
 		const float Angle = FMath::FRandRange(0.0f, 2.0f * PI);
-		const FVector Aim = (Goal + (TangentA * FMath::Cos(Angle) + TangentB * FMath::Sin(Angle)) * FMath::FRandRange(0.0f, 0.05f)).GetSafeNormal();
-		FEarthfallStrike Strike = FEarthfallStrike::Make(
-			Planet->GetActorLocation() + Planet->GetActorTransform().TransformVectorNoScale(Aim) * Planet->PlanetRadius, 0, 0.5f, 0.5f, 0.0f);
-		Strike.AttackerCountry = Factions.IsValidIndex(Unit.Owner) ? Factions[Unit.Owner].CountryId : -1;
-		Planet->ApplyStrike(Strike);
+		Aim = (Aim + (TangentA * FMath::Cos(Angle) + TangentB * FMath::Sin(Angle)) * FMath::FRandRange(0.0f, 0.03f)).GetSafeNormal();
+		FireMissile(Unit.Direction, Unit.bNaval ? 1.004f : 1.03f, Aim, Factions.IsValidIndex(Unit.Owner) ? Factions[Unit.Owner].CountryId : -1, false);
 		if (--Unit.Volleys <= 0) Units.RemoveAtSwap(Index);
 	}
 }
@@ -562,14 +736,23 @@ void UEarthfallSandboxSubsystem::BuildMarkers()
 
 	for (const FUnit& Unit : Units)
 	{
-		FEarthfallMarker& Marker = Markers.AddDefaulted_GetRef();
 		const FVector World = Transform.TransformVectorNoScale(Unit.Direction);
-		Marker.Position = Center + World * Radius * 1.006f;
-		const FVector Goal = Factions.IsValidIndex(Unit.Target) ? Transform.TransformVectorNoScale(Factions[Unit.Target].Capital) : World;
-		Marker.Forward = (Goal - World * FVector::DotProduct(Goal, World)).GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector);
-		Marker.Size = 0.20f;
-		Marker.Stretch = 2.6f;
-		Marker.Kind = EarthfallMarkers::Unit;
+		const FVector GoalLocal = Unit.bNaval && Unit.PathIndex < Unit.Path.Num() ? Unit.Path[Unit.PathIndex]
+			: (Factions.IsValidIndex(Unit.Target) ? Factions[Unit.Target].Capital : Unit.Direction);
+		const FVector Goal = Transform.TransformVectorNoScale(GoalLocal);
+		const FVector Forward = (Goal - World * FVector::DotProduct(Goal, World)).GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector);
+		const FVector Side = FVector::CrossProduct(World, Forward);
+		for (int32 Ship = 0; Ship < 3; ++Ship)
+		{
+			// A wedge: one ahead, two astern and abeam.
+			const FVector Offset = Ship == 0 ? FVector::ZeroVector : (Side * (Ship == 1 ? 0.55f : -0.55f) - Forward * 0.7f);
+			FEarthfallMarker& Marker = Markers.AddDefaulted_GetRef();
+			Marker.Position = Center + World * Radius * (Unit.bNaval ? 1.004f : 1.03f) + Offset * (Unit.bNaval ? 1.0f : 1.4f);
+			Marker.Forward = Forward;
+			Marker.Size = Unit.bNaval ? 0.30f : 0.20f;
+			Marker.Stretch = Unit.bNaval ? 2.6f : 5.0f;
+			Marker.Kind = Unit.bNaval ? EarthfallMarkers::Unit : EarthfallMarkers::AirWing;
+		}
 	}
 	for (const FInterceptor& Interceptor : Interceptors)
 	{
@@ -594,10 +777,14 @@ void UEarthfallSandboxSubsystem::BuildMarkers()
 		Marker.Stretch = 1.6f;
 		Marker.Kind = EarthfallMarkers::Satellite;
 	}
-	// Fighting flickers inside rage and insurgency zones.
+	// Fighting flickers inside rage and insurgency zones. Down over streamed
+	// terrain the ground overlay draws the fires instead; sparks would hang in the sky.
+	const APlayerController* ViewController = GetWorld()->GetFirstPlayerController();
+	const AEarthOrbitPawn* ViewPawn = ViewController ? Cast<AEarthOrbitPawn>(ViewController->GetPawn()) : nullptr;
+	const bool bLowView = ViewPawn && ViewPawn->GetOrbitDistance() < Radius * 1.02f;
 	for (const FBioZone& Zone : BioZones)
 	{
-		if (Zone.Kind == 0) continue;
+		if (Zone.Kind == 0 || bLowView) continue;
 		FVector TangentA;
 		FVector TangentB;
 		Zone.Direction.FindBestAxisVectors(TangentA, TangentB);
@@ -732,8 +919,8 @@ FString UEarthfallSandboxSubsystem::UseSatellite(const FVector& LocalDirection)
 FString UEarthfallSandboxSubsystem::UseStrikeGroup(const FVector& LocalDirection)
 {
 	if (!bFactionsBuilt) BuildFactions();
-	if (Units.Num() >= MaxUnits) return TEXT("STRIKE GROUP  //  TOO MANY GROUPS AT SEA");
-	// It sails for the nearest capital that is at war; with the world at peace it has no orders.
+	if (Units.Num() >= MaxUnits) return TEXT("STRIKE GROUP  //  TOO MANY GROUPS DEPLOYED");
+	// It makes for the nearest capital that is at war; with the world at peace it has no orders.
 	int32 Target = -1;
 	float Best = -2.0f;
 	for (int32 Index = 0; Index < Factions.Num(); ++Index)
@@ -747,8 +934,17 @@ FString UEarthfallSandboxSubsystem::UseStrikeGroup(const FVector& LocalDirection
 		}
 	}
 	if (Target < 0) return TEXT("STRIKE GROUP  //  NO NATION IS AT WAR  //  WHISPER ONE FIRST");
-	SpawnUnit(Factions[Target].AtWar[0], Target, LocalDirection);
-	return FString::Printf(TEXT("STRIKE GROUP  //  UNDER WAY FOR %s"), *Factions[Target].Name);
+	// Placed at sea it is a naval fleet; placed over land, an air strike wing.
+	const UEarthfallPopulationSubsystem* People = Population();
+	const bool bAtSea = People && People->GetCountryAtDirection(LocalDirection) == 0;
+	const int32 Owner = Factions[Target].AtWar[0];
+	if (bAtSea && SpawnUnit(Owner, Target, LocalDirection, 1))
+	{
+		return FString::Printf(TEXT("NAVAL FLEET  //  UNDER WAY FOR THE COAST OF %s"), *Factions[Target].Name);
+	}
+	SpawnUnit(Owner, Target, LocalDirection, 2);
+	if (bAtSea) return FString::Printf(TEXT("NO SEA ROUTE  //  AIR STRIKE WING INBOUND FOR %s"), *Factions[Target].Name);
+	return FString::Printf(TEXT("AIR STRIKE WING  //  INBOUND FOR %s"), *Factions[Target].Name);
 }
 
 FString UEarthfallSandboxSubsystem::UseVolcano(const FVector& LocalDirection)
@@ -1088,5 +1284,105 @@ void UEarthfallSandboxSubsystem::TickTraffic(float DeltaTime)
 	for (FRoute& Route : Routes)
 	{
 		Route.bOpen = Route.bSea ? !bSeaClosed : !(Grounded(Route.FromCountry) || Grounded(Route.ToCountry));
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Refugee crises at the border
+// ---------------------------------------------------------------------------
+void UEarthfallSandboxSubsystem::BuildNeighbours()
+{
+	const UEarthfallPopulationSubsystem* People = Population();
+	if (!People || People->GetCountryCount() == 0) return;
+	// Two nations are neighbours if they meet anywhere on a one-degree grid.
+	constexpr int32 Width = 360;
+	constexpr int32 Height = 180;
+	TArray<int32> Grid;
+	Grid.SetNumUninitialized(Width * Height);
+	for (int32 Y = 0; Y < Height; ++Y)
+	{
+		for (int32 X = 0; X < Width; ++X)
+		{
+			const FVector Direction = EarthfallSolar::DirectionFromLatLon(89.5 - Y, -179.5 + X);
+			Grid[Y * Width + X] = People->GetCountryAtDirection(Direction);
+			if (Grid[Y * Width + X] > 0) CountryCentres.FindOrAdd(Grid[Y * Width + X]) += Direction;
+		}
+	}
+	for (TPair<int32, FVector>& Centre : CountryCentres) Centre.Value = Centre.Value.GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector);
+	auto Link = [this](int32 A, int32 B)
+	{
+		if (A <= 0 || B <= 0 || A == B) return;
+		Neighbours.FindOrAdd(A).AddUnique(B);
+		Neighbours.FindOrAdd(B).AddUnique(A);
+	};
+	for (int32 Y = 0; Y < Height; ++Y)
+	{
+		for (int32 X = 0; X < Width; ++X)
+		{
+			Link(Grid[Y * Width + X], Grid[Y * Width + (X + 1) % Width]);
+			if (Y + 1 < Height) Link(Grid[Y * Width + X], Grid[(Y + 1) * Width + X]);
+		}
+	}
+}
+
+void UEarthfallSandboxSubsystem::TickBorders(float DeltaTime)
+{
+	BorderTimer += DeltaTime;
+	if (BorderTimer < 4.0f) return;
+	BorderTimer = 0.0f;
+	UEarthfallPopulationSubsystem* People = Population();
+	if (!People) return;
+	if (Neighbours.IsEmpty()) BuildNeighbours();
+
+	// A quarter of a stricken nation's refugees press on each neighbour, and the
+	// strain is that crowd measured against the neighbour's own population.
+	TMap<int32, float> Stress;
+	TMap<int32, int32> WorstSource;
+	TMap<int32, double> WorstCrowd;
+	FEarthfallCountryStats Source;
+	FEarthfallCountryStats Host;
+	for (int32 Id = 1; Id < People->GetCountryCount(); ++Id)
+	{
+		const TArray<int32>* Adjacent = Neighbours.Find(Id);
+		if (!Adjacent || !People->GetCountryStats(Id, Source)) continue;
+		// Only a real exodus counts: five million people and a fifth of the nation.
+		if (Source.Displaced < 5.0e6 || Source.Displaced < Source.InitialPopulation * 0.20) continue;
+		for (int32 Neighbour : *Adjacent)
+		{
+			if (!People->GetCountryStats(Neighbour, Host) || Host.InitialPopulation < 1.0e6) continue;
+			const double Crowd = Source.Displaced * 0.25;
+			Stress.FindOrAdd(Neighbour) += static_cast<float>(Crowd / Host.InitialPopulation) * 0.4f;
+			if (Crowd > WorstCrowd.FindRef(Neighbour))
+			{
+				WorstCrowd.Add(Neighbour, Crowd);
+				WorstSource.Add(Neighbour, Id);
+			}
+		}
+	}
+	People->SetBorderStress(Stress);
+
+	for (const TPair<int32, float>& Entry : Stress)
+	{
+		if (Entry.Value < 0.06f) continue;
+		const int32 SourceId = WorstSource.FindRef(Entry.Key);
+		if (!People->GetCountryStats(Entry.Key, Host) || !People->GetCountryStats(SourceId, Source)) continue;
+		if (!BorderCrises.Contains(Entry.Key))
+		{
+			BorderCrises.Add(Entry.Key);
+			People->PostDispatch(FString::Printf(TEXT("[BORDER CRISIS] %.1f MILLION REFUGEES FROM %s CROSS INTO %s"),
+				WorstCrowd.FindRef(Entry.Key) / 1.0e6, *Source.Name.ToUpper(), *Host.Name.ToUpper()), 6);
+			UE_LOG(LogEarthfallSandbox, Display, TEXT("EARTHFALL_BORDER %s strained by refugees from %s (stress %.2f)"), *Host.Name, *Source.Name, Entry.Value);
+		}
+		// A government that still stands may be blamed for the flood and attacked;
+		// one that has already fallen leaves its neighbours only martial law.
+		if (Entry.Value >= 0.18f && Source.Stability < EEarthfallStability::Collapsed && FMath::FRand() < 0.30f)
+		{
+			const int32 HostFaction = FactionFor(Entry.Key, CountryCentres.FindRef(Entry.Key));
+			const int32 SourceFaction = FactionFor(SourceId, CountryCentres.FindRef(SourceId));
+			if (HostFaction >= 0 && SourceFaction >= 0 && Factions[HostFaction].AtWar.IsEmpty() && !Factions[HostFaction].bFallen)
+			{
+				DeclareWar(HostFaction, SourceFaction, TEXT("REFUGEE CRISIS AT THE BORDER"));
+			}
+		}
 	}
 }

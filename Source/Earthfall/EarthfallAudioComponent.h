@@ -37,6 +37,17 @@ public:
 	/** Strength 0..1; the boom starts DelaySeconds from now. */
 	void TriggerBoom(float Strength, float DelaySeconds);
 	void TriggerAlert() { AlertRequests.fetch_add(1); }
+	/** 1 = normal; 0 mutes drone, wind and crackle so a single voice can be measured. */
+	void SetAmbienceLevel(float Value) { AmbienceLevel.store(FMath::Clamp(Value, 0.0f, 1.0f)); }
+
+	/** No sample ever leaves the synth louder than this. */
+	static constexpr float OutputCeiling = 0.95f;
+	/**
+	 * Render every voice offline at 48 kHz, with no audio device, and log peak,
+	 * RMS and edge levels. Returns true if nothing exceeds OutputCeiling, every
+	 * voice starts and ends at silence, and the boom sits 6-24 dB over the alert.
+	 */
+	static bool RunSelfTest();
 
 protected:
 	virtual bool Init(int32& SampleRate) override;
@@ -47,6 +58,7 @@ private:
 
 	std::atomic<float> Descent{0.0f};
 	std::atomic<float> Firestorm{0.0f};
+	std::atomic<float> AmbienceLevel{1.0f};
 	std::atomic<int32> LaunchRequests{0};
 	std::atomic<int32> AlertRequests{0};
 	/** Pending booms: strength, and samples until each starts. A negative delay is an empty slot. */
@@ -66,6 +78,7 @@ private:
 	float CrackleEnvelope = 0.0f;
 	float SmoothDescent = 0.0f;
 	float SmoothFirestorm = 0.0f;
+	float MasterGain = 0.0f;
 	int32 LaunchesSeen = 0;
 	int32 AlertsSeen = 0;
 	float LaunchAge = -1.0f;

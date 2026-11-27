@@ -20,7 +20,8 @@ namespace EarthfallMarkers
 	constexpr uint8 AirTraffic = 4;  // airliners between hub cities
 	constexpr uint8 Shipping = 5;    // freighters on the sea lanes
 	constexpr uint8 Combat = 6;      // fighting in a rage or insurgency zone
-	constexpr uint8 Count = 7;
+	constexpr uint8 AirWing = 7;     // air strike wings crossing land
+	constexpr uint8 Count = 8;
 }
 
 /** One light for AEarthfallSandboxView to draw this frame. World space. */
@@ -89,6 +90,10 @@ public:
 	float GetDebrisLevel() const { return DebrisLevel; }
 	void AddDebris(float Amount);
 	int32 GetInterceptCount() const { return InterceptCount; }
+	/** Pairs of factions currently at war. */
+	int32 GetActiveWarCount() const;
+	int32 GetFleetCount() const;
+	int32 GetBorderCrisisCount() const { return BorderCrises.Num(); }
 	double GetInfected() const { return InfectedNow; }
 	double GetCured() const { return CuredTotal; }
 	double GetPlagueDead() const { return PlagueDead; }
@@ -124,8 +129,12 @@ private:
 		FVector Direction = FVector::ForwardVector;
 		int32 Owner = 0;
 		int32 Target = 0;
-		int32 Volleys = 3;
+		int32 Volleys = 4;
 		float FireTimer = 0.0f;
+		/** A naval fleet keeps to water along Path; an air wing flies the great circle. */
+		bool bNaval = false;
+		TArray<FVector> Path;
+		int32 PathIndex = 0;
 	};
 	struct FInterceptor
 	{
@@ -188,6 +197,15 @@ private:
 	TArray<FPendingMeteor> PendingMeteors;
 	TArray<FEarthfallMarker> Markers;
 	TArray<FBioZone> BioZones;
+	/** 240x120 grid, 1.5 degrees a cell: 1 where the cell centre is open water. */
+	TArray<uint8> WaterGrid;
+	/** Country ID -> the countries it shares a border with. */
+	TMap<int32, TArray<int32>> Neighbours;
+	/** Countries already reported as overwhelmed by refugees. */
+	TSet<int32> BorderCrises;
+	/** Country ID -> a direction near the middle of it. */
+	TMap<int32, FVector> CountryCentres;
+	float BorderTimer = 0.0f;
 	TArray<FRoute> Routes;
 	float BioTimer = 0.0f;
 	float BioNewsTimer = 0.0f;
@@ -221,7 +239,14 @@ private:
 	void TickDebrisField(float DeltaTime);
 	void BuildMarkers();
 	void LaunchMissile(FFaction& From, const FFaction& At, bool bNuclear);
-	void SpawnUnit(int32 Owner, int32 Target, const FVector& From);
+	/** Mode 0 picks a fleet when the target can be reached by sea, 1 forces a fleet, 2 an air wing. */
+	bool SpawnUnit(int32 Owner, int32 Target, const FVector& From, int32 Mode = 0);
+	void FireMissile(const FVector& FromDirection, float FromAltitudeScale, const FVector& AimDirection, int32 AttackerCountry, bool bNuclear);
+	void BuildWaterGrid();
+	/** A water-only route from near From to the reachable water nearest To. Empty if there is none. */
+	bool FindSeaRoute(const FVector& From, const FVector& To, TArray<FVector>& OutPath) const;
+	void BuildNeighbours();
+	void TickBorders(float DeltaTime);
 
 	FString UseVolcano(const FVector& LocalDirection);
 	FString UseTsunami(const FVector& LocalDirection);

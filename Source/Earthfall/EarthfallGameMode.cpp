@@ -1,5 +1,6 @@
 #include "EarthfallGameMode.h"
 #include "EarthOrbitPawn.h"
+#include "EarthfallAudioComponent.h"
 #include "EarthfallCaptureDirector.h"
 #include "EarthfallEjecta.h"
 #include "EarthfallHUD.h"
@@ -136,5 +137,8 @@ void AEarthfallGameMode::BeginPlay()
 	if (FParse::Param(FCommandLine::Get(), TEXT("EarthfallCapture")))
 	{
 		World->SpawnActor<AEarthfallCaptureDirector>(AEarthfallCaptureDirector::StaticClass(), FTransform::Identity, Params);
+		// Captures run silent, so the synth is checked offline instead: every voice
+		// rendered to a buffer and measured.
+		UEarthfallAudioComponent::RunSelfTest();
 	}
 }

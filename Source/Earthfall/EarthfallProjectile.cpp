@@ -127,7 +127,9 @@ void AEarthfallProjectile::Launch(AEarthfallPlanet* InPlanet, AEarthOrbitPawn* I
 		const FVector To = (Strike.WorldLocation - PlanetCenter).GetSafeNormal();
 		const float HalfAngle = 0.5f * FMath::Acos(FMath::Clamp(static_cast<float>(FVector::DotProduct(From, To)), -1.0f, 1.0f));
 		const FVector Over = (From + To).GetSafeNormal(UE_SMALL_NUMBER, From);
-		Control = PlanetCenter + Over * (PlanetRadius / FMath::Max(FMath::Cos(HalfAngle), 0.25f) * 1.12f + 4.0f);
+		// Short hops fly low; intercontinental shots loft.
+		const float Loft = FMath::Clamp(HalfAngle / 0.5f, 0.12f, 1.0f);
+		Control = PlanetCenter + Over * (PlanetRadius / FMath::Max(FMath::Cos(HalfAngle), 0.25f) * (1.0f + 0.12f * Loft) + 4.0f * Loft);
 	}
 	if (UEarthfallSandboxSubsystem* Sandbox = GetWorld() ? GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>() : nullptr) Sandbox->NotifyLaunch();
 

@@ -211,6 +211,7 @@ void AEarthfallPlanet::BindSimulationTextures(UMaterialInstanceDynamic* Material
 	if (AshPlumeRTs.IsValidIndex(AshReadIndex)) Material->SetTextureParameterValue(TEXT("AshPlumeRT"), AshPlumeRTs[AshReadIndex]);
 	if (TsunamiRTs.IsValidIndex(TsunamiReadIndex)) Material->SetTextureParameterValue(TEXT("TsunamiRT"), TsunamiRTs[TsunamiReadIndex]);
 	if (FireRTs.IsValidIndex(FireReadIndex)) Material->SetTextureParameterValue(TEXT("FireMaskRT"), FireRTs[FireReadIndex]);
+	if (PlagueRT) Material->SetTextureParameterValue(TEXT("PlagueRT"), PlagueRT);
 }
 
 void AEarthfallPlanet::SetSurfaceFade(float Fade)
@@ -757,6 +758,7 @@ void AEarthfallPlanet::ResetPlanet()
 	TsunamiDrive = 0.0f;
 	WinterLevel = 0.0f;
 	WinterOverride = -1.0f;
+	SecondaryFireSites.Reset();
 	FamineDeadSinceNews = 0.0;
 	for (TActorIterator<AEarthfallPlume> It(GetWorld()); It; ++It) It->Destroy();
 	for (TActorIterator<AEarthfallEjecta> It(GetWorld()); It; ++It) It->Reset();
@@ -1031,6 +1033,9 @@ void AEarthfallPlanet::SeedSecondaryImpact(const FVector& LocalDirection)
 	if (bLand && FireRTs.IsValidIndex(FireReadIndex))
 	{
 		StampInto(FireRTs[FireReadIndex], AshStampTexture, LocalDirection, 0.012f, FLinearColor(1.0f, 0.0f, 0.0f, 1.0f));
+		SecondaryFireSites.Add(LocalDirection);
+		UE_LOG(LogTemp, Display, TEXT("EARTHFALL_SECONDARY_FIRE #%d lit by ejecta at lat %.1f lon %.1f"), SecondaryFireSites.Num(),
+			FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(LocalDirection.Z, -1.0, 1.0))), FMath::RadiansToDegrees(FMath::Atan2(-LocalDirection.Y, LocalDirection.X)));
 		FireActiveSeconds = FireTailSeconds;
 		AshActiveSeconds = FMath::Max(AshActiveSeconds, FireTailSeconds);
 	}

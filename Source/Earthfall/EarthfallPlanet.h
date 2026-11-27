@@ -58,6 +58,8 @@ public:
 	/** Lift the sea surface at an open-water point, as an impact or sea-floor rupture does. Strength 0..1. */
 	void TriggerTsunami(const FVector& LocalDirection, float Strength);
 	bool IsTsunamiActive() const { return TsunamiActiveSeconds > 0.0f; }
+	/** Planet-local directions where ejecta fragments have lit fires on land since the last reset. */
+	const TArray<FVector>& GetSecondaryFireSites() const { return SecondaryFireSites; }
 	/**
 	 * Redraw the bio mask from the sandbox's zones. XYZ = planet-local direction,
 	 * W = angular radius; colour R = infection, G = rage or insurgency.
@@ -210,6 +212,7 @@ private:
 	int32 AshReadIndex = 0;
 	float SurfaceFade = 1.0f;
 	float WinterLevel = 0.0f;
+	TArray<FVector> SecondaryFireSites;
 	float WinterOverride = -1.0f;
 	float FamineTimer = 0.0f;
 	float FamineNewsTimer = 0.0f;

@@ -15,6 +15,9 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogEarthfallCapture, Log, All);
 
+/** Longitude and latitude the secondary-wildfire shot looks from, chosen at run time. */
+static FVector2D GSecondaryFireView(-85.0, 40.0);
+
 AEarthfallCaptureDirector::AEarthfallCaptureDirector()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -182,6 +185,40 @@ void AEarthfallCaptureDirector::BuildScript()
 	At(97.2f, [=]() { View(-100.0f, 20.0f, 103.5f); });
 	At(100.0f, [=]() { View(-100.0f, 20.0f, 101.2f); });
 	At(110.0f, [this]() { Shot(TEXT("34-ash-column-terrain")); });
+	// A secondary wildfire: the fire lit furthest from the mantle strike by one of
+	// its own ejecta fragments falling back.
+	At(110.05f, [this]()
+	{
+		const FVector Strike = EarthfallSolar::DirectionFromLatLon(45.0, -100.0);
+		for (TActorIterator<AEarthfallPlanet> It(GetWorld()); It; ++It)
+		{
+			const TArray<FVector>& Sites = It->GetSecondaryFireSites();
+			FVector Site = Strike;
+			for (const FVector& Candidate : Sites)
+			{
+				// In daylight, so the frame shows the scar as well as the flames, and well clear of the strike's own fire ring.
+				const bool bDaylit = FVector::DotProduct(Candidate, It->GetActorTransform().InverseTransformVectorNoScale(It->GetSunDirectionWorld())) > 0.35;
+				const double Near = FVector::DotProduct(Candidate, Strike);
+				// The strike's own blast and fire ring reach about 2,100 km (0.33 rad), so
+				// only a fire beyond 2,900 km (0.45 rad) can have been lit by ejecta alone.
+				// And below 50 degrees of latitude, where there is forest or grass to burn
+				// (a fragment that lands on tundra or ice lights nothing that lasts).
+				const bool bFuel = FMath::Abs(Candidate.Z) < 0.766;
+				if (bDaylit && bFuel && Near < 0.90 && (Site.Equals(Strike) || Near > FVector::DotProduct(Site, Strike))) Site = Candidate;
+			}
+			const float Latitude = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(static_cast<float>(Site.Z), -1.0f, 1.0f)));
+			const float Longitude = FMath::RadiansToDegrees(FMath::Atan2(static_cast<float>(-Site.Y), static_cast<float>(Site.X)));
+			UE_LOG(LogEarthfallCapture, Display, TEXT("EARTHFALL_CAPTURE secondary fires=%d, framing the daylit one nearest the strike at lat %.1f lon %.1f, %.0f km from it"),
+				Sites.Num(), Latitude, Longitude, FMath::Acos(FMath::Clamp(static_cast<float>(FVector::DotProduct(Site, Strike)), -1.0f, 1.0f)) * 6371.0f);
+			// From orbit the strike's soot veil hides the ground here, so the camera
+			// goes under it: two degrees south of the fire, looking north across it.
+			GSecondaryFireView = FVector2D(Longitude, Latitude - 2.0f);
+			if (AEarthOrbitPawn* P = Pawn()) P->SetOrbitView(GSecondaryFireView.X, GSecondaryFireView.Y, 103.5f);
+		}
+	});
+	At(112.8f, [this]() { if (AEarthOrbitPawn* P = Pawn()) P->SetOrbitView(GSecondaryFireView.X, GSecondaryFireView.Y, 100.9f); });
+	At(121.0f, [this]() { Shot(TEXT("34b-secondary-wildfire")); });
+	TimeOffset += 11.2f;
 	// The command dock's second and third tabs (the first is in every HUD shot).
 	At(110.2f, [=, this]() { View(-80.0f, 30.0f, 430.0f); if (AEarthOrbitPawn* P = Pawn()) { P->SetHudMode(EEarthfallHudMode::Full); P->SelectTool(EarthfallTools::TabNature, EarthfallTools::PlagueRain); } });
 	At(111.4f, [this]() { Shot(TEXT("35-dock-bio-nature")); });
@@ -291,7 +328,72 @@ void AEarthfallCaptureDirector::BuildScript()
 			UE_LOG(LogEarthfallCapture, Display, TEXT("EARTHFALL_CAPTURE sandbox intercepts=%d debris=%.2f"), Sandbox->GetInterceptCount(), Sandbox->GetDebrisLevel());
 		}
 	});
-	At(171.0f, [this]() { Finish(); });
+	// --- Naval fleet and Force Peace, from a clean world. France and Brazil go to
+	// war (France's allies follow by treaty); a fleet placed in the South Atlantic
+	// sails round to the coast nearest Brasilia and shells it.
+	At(171.0f, [=, this]()
+	{
+		AEarthOrbitPawn* P = Pawn();
+		UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>();
+		if (!P || !Sandbox) return;
+		P->ResetSimulation();
+		P->SetHudMode(EEarthfallHudMode::Full);
+		View(-36.0f, -14.0f, 190.0f);
+		Sandbox->UseTool(EarthfallTools::TabDiplomacy, EarthfallTools::WhisperOfWar, EarthfallSolar::DirectionFromLatLon(48.85, 2.35), P);
+		Sandbox->UseTool(EarthfallTools::TabDiplomacy, EarthfallTools::WhisperOfWar, EarthfallSolar::DirectionFromLatLon(-15.8, -47.9), P);
+		P->SelectTool(EarthfallTools::TabDiplomacy, EarthfallTools::StrikeGroup);
+		const FString Order = Sandbox->UseTool(EarthfallTools::TabDiplomacy, EarthfallTools::StrikeGroup, EarthfallSolar::DirectionFromLatLon(-21.0, -30.0), P);
+		UE_LOG(LogEarthfallCapture, Display, TEXT("EARTHFALL_CAPTURE strike group order: %s (fleets at sea: %d)"), *Order, Sandbox->GetFleetCount());
+	});
+	At(174.0f, [this]() { Shot(TEXT("50-naval-fleet-under-way")); });
+	At(179.2f, [this]() { if (AEarthOrbitPawn* P = Pawn()) P->InspectDirection(EarthfallSolar::DirectionFromLatLon(-15.8, -47.9)); });
+	At(181.0f, [this]() { Shot(TEXT("51-naval-fleet-bombards-coast")); });
+	At(183.0f, [this]()
+	{
+		AEarthOrbitPawn* P = Pawn();
+		UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>();
+		if (!P || !Sandbox) return;
+		const int32 Before = Sandbox->GetActiveWarCount();
+		P->SelectTool(EarthfallTools::TabDiplomacy, EarthfallTools::ForcePeace);
+		const FString Result = Sandbox->UseTool(EarthfallTools::TabDiplomacy, EarthfallTools::ForcePeace, EarthfallSolar::DirectionFromLatLon(-15.8, -47.9), P);
+		UE_LOG(LogEarthfallCapture, Display, TEXT("EARTHFALL_CAPTURE force peace: wars %d -> %d  //  %s"), Before, Sandbox->GetActiveWarCount(), *Result);
+	});
+	At(185.0f, [this]() { Shot(TEXT("52-force-peace")); });
+	At(190.0f, [this]()
+	{
+		int32 Aloft = 0;
+		for (TActorIterator<AEarthfallProjectile> It(GetWorld()); It; ++It) Aloft += It->IsInFlight() ? 1 : 0;
+		if (const UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>())
+		{
+			UE_LOG(LogEarthfallCapture, Display, TEXT("EARTHFALL_CAPTURE five seconds after peace: wars=%d missiles_in_flight=%d fleets=%d border_crises=%d"),
+				Sandbox->GetActiveWarCount(), Aloft, Sandbox->GetFleetCount(), Sandbox->GetBorderCrisisCount());
+		}
+	});
+
+	// --- Plague and rage seen from 40 km over streamed terrain in central Mexico.
+	At(190.2f, [=, this]()
+	{
+		AEarthOrbitPawn* P = Pawn();
+		UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>();
+		if (!P || !Sandbox) return;
+		P->ResetSimulation();
+		P->ToggleInspectMode();
+		P->SetHudMode(EEarthfallHudMode::Hidden);
+		View(-100.0f, 16.6f, 103.5f);
+		Sandbox->UseTool(EarthfallTools::TabNature, EarthfallTools::PlagueRain, EarthfallSolar::DirectionFromLatLon(19.4, -99.1), P);
+	});
+	At(195.0f, [=, this]()
+	{
+		View(-100.0f, 16.6f, 100.8f);
+		if (UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>())
+		{
+			Sandbox->UseTool(EarthfallTools::TabNature, EarthfallTools::RageOutbreak, EarthfallSolar::DirectionFromLatLon(20.9, -101.4), Pawn());
+		}
+	});
+	At(206.0f, [this]() { Shot(TEXT("53-terrain-plague-rage")); });
+	At(206.2f, [=]() { View(-100.0f, 18.6f, 100.25f); });
+	At(214.0f, [this]() { Shot(TEXT("54-terrain-rage-low")); });
+	At(214.6f, [this]() { Finish(); });
 
 	Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
 }

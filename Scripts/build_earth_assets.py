@@ -356,6 +356,7 @@ def build_terrain_decal(black, night, masks):
             ("FireTex", texture_object(material, "FireMaskRT", black, y + 600), ""),
             ("NightTex", texture_object(material, "NightTexture", night, y + 660), ""),
             ("MasksTex", texture_object(material, "MasksTexture", masks, y + 680), ""),
+            ("PlagueTex", texture_object(material, "PlagueRT", black, y + 690), ""),
             ("Sun", vector_parameter(material, "SunDirection", (1.0, 0.0, 0.0, 0.0), y + 700), "RGB"),
             ("Time", node(material, unreal.MaterialExpressionTime, -900, y + 720), ""),
             ("Terrain", vector_parameter(material, "Terrain", (0.0, 0.0, 0.0, 0.0), y + 780), "RGBA"),

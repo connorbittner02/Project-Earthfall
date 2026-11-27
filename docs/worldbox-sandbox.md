@@ -90,3 +90,62 @@ nuclear headlines.
 - Strike groups were not captured on screen, and Force Peace was not exercised.
 - The `41-interceptors` frame shows one cyan interceptor near the salvo; interceptions are
   otherwise confirmed from the log (8 in the final run).
+
+## Follow-up pass
+
+Verified by the same 4K capture, now 56 shots at about 73 fps.
+
+**Naval fleets and air wings.** A strike group is now one of two things. A *naval fleet*
+routes over a 1.5 degree water grid (Dijkstra over every cell its sea connects to) to the
+reachable water nearest the enemy capital, never crossing land, and shells the first
+coast on the line to the capital with real missiles. An *air strike wing* flies the great
+circle above the clouds. The AI sends a fleet when the capital is within 0.40 rad of
+reachable water and a wing otherwise; the Strike Group tool makes a fleet at sea and a
+wing over land. Capture: `50-naval-fleet-under-way`, `51-naval-fleet-bombards-coast`.
+
+**Force Peace.** Ends every war the nation is in, drops pending treaty joins, removes
+units on both sides and destroys missiles still in flight. Capture `52-force-peace`: a
+France-USA-UK war on Brazil went from 3 wars to 0, with 0 missiles in flight five seconds
+later.
+
+**Bio on streamed terrain.** The terrain overlay samples the bio mask: plague is a green
+ground haze, rage is small flickering fires under smoke. Combat sparks are hidden below
+1.02 R, where they would hang in the sky. Capture: `53-terrain-plague-rage`,
+`54-terrain-rage-low`.
+
+**Refugee crises.** Every four seconds, a nation with five million displaced and a fifth
+of its people on the move presses a quarter of them on each neighbour. That strain is
+added to the neighbour's own stability stress (capped at 0.35), so it can reach emergency
+or martial law with no strike on it. Above 0.18, a neighbour may declare war on a source
+whose government still stands. In the capture this started Panama-Colombia and
+Trinidad-Venezuela wars unprompted.
+
+**Synth self-test.** `UEarthfallAudioComponent::RunSelfTest()` renders every voice offline
+at 48 kHz at capture start and logs `EARTHFALL_AUDIOCHECK`. Output is `0.95 * tanh(1.1x)`,
+so no sample can exceed 0.95. Result of the last run:
+
+| Voice | Peak | RMS | First 1 ms | Last 50 ms |
+| --- | --- | --- | --- | --- |
+| Ambience, orbit | 0.216 | 0.071 | 0.0002 | n/a |
+| Ambience, low with firestorm | 0.410 | 0.059 | 0.0002 | n/a |
+| Launch | 0.208 | 0.042 | 0.0000 | 0.0000 |
+| Boom | 0.707 | 0.282 | 0.0153 | 0.0000 |
+| Alert | 0.203 | 0.056 | 0.0116 | 0.0000 |
+| Everything at once | 0.950 | 0.356 | n/a | n/a |
+
+Boom sits 14.0 dB over the alert. The test caught one fault: the alert's static started
+too abruptly (0.023 in the first millisecond); its attack is now 10 ms. This checks
+levels and edges. It does not tell anyone whether the sounds are pleasant, and the
+everything-at-once case is riding the limiter.
+
+### Still unverified or weak
+
+- **Secondary wildfires are confirmed by the log, not cleanly by a frame.** Each run logs
+  50 to 80 `EARTHFALL_SECONDARY_FIRE` ignitions. `34b-secondary-wildfire` looks across one
+  such site (the Colombian Amazon, 5,450 km from the mantle strike) and shows flames, but
+  that region is also about 1,200 km from the earlier Amazon rod strike, whose own fire
+  front spreads that way. The frame cannot tell the two apart.
+- Air strike wings were not captured on screen.
+- Fleet routes follow grid cells and zigzag; narrow straits under 1.5 degrees are closed.
+- Refugee wars can be frequent among small neighbours after a large strike.
+- Rage fires on terrain are small points; they are easy to miss from 40 km.

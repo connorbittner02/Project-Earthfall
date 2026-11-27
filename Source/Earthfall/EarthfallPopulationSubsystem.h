@@ -146,6 +146,8 @@ public:
 	double ApplyRegionalAttrition(const FVector& LocalDirection, float RadiusRadians, double KillFraction, double DisplaceFraction, float GridDamage);
 	/** Bring power back, settle the displaced and clear drifting fallout in a region. */
 	void RepairRegion(const FVector& LocalDirection, float RadiusRadians);
+	/** Replace every nation's border strain (country ID -> 0..0.35); nations not listed are cleared. */
+	void SetBorderStress(const TMap<int32, float>& StressByCountry);
 	static const TCHAR* StabilityLabel(EEarthfallStability Stability);
 
 	/** Simulation clock shared with the ash advection shader so both use the same wind. */
@@ -194,6 +196,8 @@ private:
 		float GridSum = 0.0f;
 		int32 CellCount = 0;
 		EEarthfallStability Stability = EEarthfallStability::Stable;
+		/** Strain from refugees arriving over the border, added to this nation's own. */
+		float BorderStress = 0.0f;
 	};
 
 	/** 1024x512 country IDs loaded from Content/Earth/Data/CountryID.bin. */
