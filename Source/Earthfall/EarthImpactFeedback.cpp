@@ -2,13 +2,13 @@
 #include "Components/PointLightComponent.h"
 #include "Components/SceneComponent.h"
 #include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/ConstructorHelpers.h"
 
 namespace
 {
-constexpr int32 RingSegments = 48;
-constexpr int32 TubeSegments = 6;
-constexpr float RingLifetime = 1.1f;
+constexpr int32 RingSegments = 32;
+constexpr int32 TubeSegments = 5;
 }
 
 AEarthImpactFeedback::AEarthImpactFeedback()
@@ -27,27 +27,66 @@ AEarthImpactFeedback::AEarthImpactFeedback()
     Ring->SetupAttachment(Scene);
     Ring->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     Ring->SetGenerateOverlapEvents(false);
-    static ConstructorHelpers::FObjectFinder<UMaterialInterface> VertexColorMaterial(
-        TEXT("/Engine/EngineDebugMaterials/VertexColorMaterial.VertexColorMaterial"));
-    if (VertexColorMaterial.Succeeded()) Ring->SetMaterial(0, VertexColorMaterial.Object);
-    UpdateRing(0.0f);
-    SetLifeSpan(RingLifetime);
+    static ConstructorHelpers::FObjectFinder<UMaterialInterface> RingMaterialAsset(
+        TEXT("/Game/Earthfall/Materials/M_EarthfallShockwave.M_EarthfallShockwave"));
+    if (RingMaterialAsset.Succeeded())
+    {
+        RingMaterial = UMaterialInstanceDynamic::Create(RingMaterialAsset.Object, this);
+        Ring->SetMaterial(0, RingMaterial);
+    }
+    BuildRing();
+    OrbitalBeam = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("OrbitalBeam"));
+    OrbitalBeam->SetupAttachment(Scene);
+    OrbitalBeam->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    OrbitalBeam->SetVisibility(false);
+    static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderMesh(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+    if (CylinderMesh.Succeeded()) OrbitalBeam->SetStaticMesh(CylinderMesh.Object);
+    if (RingMaterial) RingMaterial->SetVectorParameterValue(TEXT("GlowColor"), AccentColor);
+    if (RingMaterialAsset.Succeeded())
+    {
+        BeamMaterial = UMaterialInstanceDynamic::Create(RingMaterialAsset.Object, this);
+        OrbitalBeam->SetMaterial(0, BeamMaterial);
+        BeamMaterial->SetVectorParameterValue(TEXT("GlowColor"), FLinearColor(0.15f, 0.8f, 1.0f));
+    }
+    SetLifeSpan(Lifetime);
+}
+
+void AEarthImpactFeedback::InitFeedback(float ImpactRadius, FLinearColor InAccentColor, float InLifetime, bool bShowBeam, float FlashIntensity)
+{
+    AccentColor = InAccentColor;
+    Lifetime = FMath::Max(0.1f, InLifetime);
+    PeakFlashIntensity = FlashIntensity;
+    ExpansionRadius = ImpactRadius * 3.2f;
+    Age = 0.0f;
+    SetLifeSpan(Lifetime);
+    Flash->SetLightColor(AccentColor);
+    Flash->SetIntensity(FlashIntensity);
+    if (RingMaterial) RingMaterial->SetVectorParameterValue(TEXT("GlowColor"), AccentColor);
+    if (bShowBeam)
+    {
+        OrbitalBeam->SetVisibility(true);
+        OrbitalBeam->SetRelativeLocation(FVector(0, 0, 70.0f));
+        OrbitalBeam->SetRelativeScale3D(FVector(0.075f, 0.075f, 1.4f));
+        if (BeamMaterial) BeamMaterial->SetVectorParameterValue(TEXT("GlowColor"), AccentColor);
+    }
 }
 
 void AEarthImpactFeedback::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
     Age += DeltaSeconds;
-    const float Alpha = FMath::Clamp(Age / RingLifetime, 0.0f, 1.0f);
-    UpdateRing(Alpha);
-    Flash->SetIntensity(FMath::Lerp(22000.0f, 0.0f, Alpha));
+    const float Alpha = FMath::Clamp(Age / Lifetime, 0.0f, 1.0f);
+    const float Fade = 1.0f - Alpha;
+    Ring->SetRelativeScale3D(FVector(FMath::Lerp(0.035f, ExpansionRadius / 90.0f, Alpha)));
+    if (RingMaterial) RingMaterial->SetScalarParameterValue(TEXT("Opacity"), Fade);
+    Flash->SetIntensity(FMath::Lerp(PeakFlashIntensity, 0.0f, Alpha));
+    if (OrbitalBeam->IsVisible() && BeamMaterial) BeamMaterial->SetScalarParameterValue(TEXT("Opacity"), Fade * 0.8f);
 }
 
-void AEarthImpactFeedback::UpdateRing(float Alpha)
+void AEarthImpactFeedback::BuildRing()
 {
-    const float Radius = FMath::Lerp(5.0f, 90.0f, Alpha);
-    const float TubeRadius = FMath::Lerp(3.2f, 1.0f, Alpha);
-    const float Glow = 1.0f - Alpha;
+    const float Radius = 90.0f;
+    const float TubeRadius = 2.2f;
     TArray<FVector> Vertices;
     TArray<int32> Indices;
     TArray<FVector> Normals;
@@ -68,7 +107,7 @@ void AEarthImpactFeedback::UpdateRing(float Alpha)
             Vertices.Add(Radial * (Radius + TubeRadius * FMath::Cos(Phi)) + FVector::UpVector * (TubeRadius * FMath::Sin(Phi)));
             Normals.Add(Normal);
             UVs.Add(FVector2D(U, V));
-            Colors.Add(FLinearColor(Glow, Glow * 0.22f, Glow * 0.025f, 1.0f));
+            Colors.Add(FLinearColor::White);
             Tangents.Add(FProcMeshTangent(-FMath::Sin(Theta), FMath::Cos(Theta), 0.0f));
         }
     }

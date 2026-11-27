@@ -5,9 +5,10 @@ An Unreal Engine 5.8 prototype for an Earth-scale destruction sandbox.
 ## Current prototype
 
 - Procedurally generated spherical globe with stylized land, ocean, and polar regions
-- Orbit camera with mouse look and wheel zoom
+- Orbit camera with RMB-drag mouse look and wheel zoom; visible cursor aims directly at the surface
 - Three selectable strike types with different crater sizes, strength, and cooldowns
-- Click-to-strike craters, exposed-rock colors, flash, and expanding torus shockwave
+- Click-to-strike cumulative craters with raised rims, biome-aware scorch, cooling heat glow, and a surface blast-radius preview
+- Distinct kinetic, plasma, and mantle impact effects with an expanding shockwave that reuses one mesh
 - On-screen aiming, target lock, weapon selection, cooldown, impact counter, and planet reset
 
 The planet currently uses a moderate resolution CPU mesh for this first deformation prototype. It is not yet the GPU SDF terrain system described in the design brief.
@@ -17,7 +18,9 @@ The planet currently uses a moderate resolution CPU mesh for this first deformat
 1. Install Unreal Engine 5.8 with its C++ toolchain.
 2. Open Earthfall.uproject.
 3. Allow Unreal to build the Earthfall module.
-4. Press Play. Move the mouse to orbit, use the wheel to zoom, press 1, 2, or 3 to select a weapon, click the planet to strike, and press R to restore it.
+4. Press Play. Hold RMB and drag to orbit, use the wheel to zoom, press 1, 2, or 3 to select a weapon, click the planet to strike, and press R to restore it.
+
+The runtime surface and shockwave materials are included under `Content/Earthfall/Materials`; no marketplace plugins or additional in-editor material setup are required.
 
 ## Build from PowerShell
 

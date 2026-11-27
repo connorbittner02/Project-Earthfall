@@ -6,6 +6,8 @@
 #include "GameFramework/PlayerController.h"
 #include "Components/InputComponent.h"
 #include "DrawDebugHelpers.h"
+#include "InputCoreTypes.h"
+#include "Framework/Application/SlateApplication.h"
 
 AEarthOrbitPawn::AEarthOrbitPawn()
 {
@@ -16,8 +18,10 @@ AEarthOrbitPawn::AEarthOrbitPawn()
     Camera->SetupAttachment(Root);
     PlanetFillLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("PlanetFillLight"));
     PlanetFillLight->SetupAttachment(Camera);
-    PlanetFillLight->SetIntensity(9000.0f);
-    PlanetFillLight->SetAttenuationRadius(1800.0f);
+    // The directional sun supplies the main key light; this low camera fill
+    // keeps the night-facing half readable without washing out the polar cap.
+    PlanetFillLight->SetIntensity(2800.0f);
+    PlanetFillLight->SetAttenuationRadius(1400.0f);
     PlanetFillLight->SetLightColor(FLinearColor(0.30f, 0.52f, 1.0f));
     PlanetFillLight->SetCastShadows(false);
     AutoPossessPlayer = EAutoReceiveInput::Player0;
@@ -30,7 +34,10 @@ void AEarthOrbitPawn::BeginPlay()
     {
         PC->bShowMouseCursor = true;
         PC->bEnableClickEvents = true;
-        PC->SetInputMode(FInputModeGameAndUI());
+        FInputModeGameAndUI InputMode;
+        InputMode.SetHideCursorDuringCapture(false);
+        InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+        PC->SetInputMode(InputMode);
     }
 }
 
@@ -39,14 +46,37 @@ void AEarthOrbitPawn::Tick(float DeltaSeconds)
     Super::Tick(DeltaSeconds);
     CooldownRemaining = FMath::Max(0.0f, CooldownRemaining - DeltaSeconds);
     MessageTimer = FMath::Max(0.0f, MessageTimer - DeltaSeconds);
-    UpdateAimState();
+    if (bIsOrbiting)
+    {
+        const APlayerController* PC = Cast<APlayerController>(GetController());
+        float MouseX = 0.0f;
+        float MouseY = 0.0f;
+        const bool bMouseInViewport = PC && PC->GetMousePosition(MouseX, MouseY);
+        const bool bApplicationActive = FSlateApplication::IsInitialized() && FSlateApplication::Get().IsActive();
+        if (!PC || !PC->IsInputKeyDown(EKeys::RightMouseButton) || !bMouseInViewport || !bApplicationActive) EndOrbit();
+    }
+    ShakeTimeRemaining = FMath::Max(0.0f, ShakeTimeRemaining - DeltaSeconds);
+    ShakePhase += DeltaSeconds;
     Yaw += PendingOrbit.X;
     Pitch = FMath::Clamp(Pitch + PendingOrbit.Y, -80.0f, 80.0f);
     PendingOrbit = FVector::ZeroVector;
     const FRotator OrbitRotation(Pitch, Yaw, 0.0f);
-    const FVector CameraLocation = OrbitRotation.Vector() * -Distance;
+    FVector CameraLocation = OrbitRotation.Vector() * -Distance;
+    FRotator CameraRotation = (-CameraLocation).Rotation();
+    if (ShakeTimeRemaining > 0.0f)
+    {
+        const float Fade = ShakeTimeRemaining / FMath::Max(ShakeDuration, KINDA_SMALL_NUMBER);
+        const float Strength = ShakeStrength * Fade;
+        CameraLocation += FVector(
+            FMath::Sin(ShakePhase * 37.0f) * Strength,
+            FMath::Sin(ShakePhase * 53.0f + 1.7f) * Strength,
+            FMath::Cos(ShakePhase * 29.0f) * Strength * 0.55f);
+        CameraRotation.Pitch += FMath::Sin(ShakePhase * 31.0f) * Strength * 0.12f;
+        CameraRotation.Yaw += FMath::Cos(ShakePhase * 43.0f) * Strength * 0.12f;
+    }
     Camera->SetWorldLocation(CameraLocation);
-    Camera->SetWorldRotation((-CameraLocation).Rotation());
+    Camera->SetWorldRotation(CameraRotation);
+    UpdateAimState();
 }
 
 void AEarthOrbitPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -54,6 +84,8 @@ void AEarthOrbitPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
     Super::SetupPlayerInputComponent(PlayerInputComponent);
     PlayerInputComponent->BindAxis(TEXT("OrbitYaw"), this, &AEarthOrbitPawn::OrbitYawInput);
     PlayerInputComponent->BindAxis(TEXT("OrbitPitch"), this, &AEarthOrbitPawn::OrbitPitchInput);
+    PlayerInputComponent->BindAction(TEXT("OrbitHold"), IE_Pressed, this, &AEarthOrbitPawn::BeginOrbit);
+    PlayerInputComponent->BindAction(TEXT("OrbitHold"), IE_Released, this, &AEarthOrbitPawn::EndOrbit);
     PlayerInputComponent->BindAxis(TEXT("Zoom"), this, &AEarthOrbitPawn::ZoomInput);
     PlayerInputComponent->BindAction(TEXT("Impact"), IE_Pressed, this, &AEarthOrbitPawn::FireImpact);
     PlayerInputComponent->BindAction(TEXT("Weapon1"), IE_Pressed, this, &AEarthOrbitPawn::SelectWeapon1);
@@ -64,12 +96,25 @@ void AEarthOrbitPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 
 void AEarthOrbitPawn::OrbitYawInput(float Value)
 {
+    if (!bIsOrbiting) return;
     PendingOrbit.X += Value * 90.0f * GetWorld()->GetDeltaSeconds();
 }
 
 void AEarthOrbitPawn::OrbitPitchInput(float Value)
 {
+    if (!bIsOrbiting) return;
     PendingOrbit.Y += Value * 90.0f * GetWorld()->GetDeltaSeconds();
+}
+
+void AEarthOrbitPawn::BeginOrbit()
+{
+    bIsOrbiting = true;
+}
+
+void AEarthOrbitPawn::EndOrbit()
+{
+    bIsOrbiting = false;
+    PendingOrbit = FVector::ZeroVector;
 }
 
 void AEarthOrbitPawn::ZoomInput(float Value)
@@ -86,8 +131,12 @@ void AEarthOrbitPawn::FireImpact()
         MessageTimer = 0.7f;
         return;
     }
-    const FVector Start = Camera->GetComponentLocation();
-    const FVector End = Start + Camera->GetForwardVector() * 5000.0f;
+    APlayerController* PC = Cast<APlayerController>(GetController());
+    if (!PC) return;
+    FVector Start;
+    FVector Direction;
+    if (!PC->DeprojectMousePositionToWorld(Start, Direction)) return;
+    const FVector End = Start + Direction * 5000.0f;
     FHitResult Hit;
     if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility))
     {
@@ -95,7 +144,8 @@ void AEarthOrbitPawn::FireImpact()
         {
             static const float Radii[] = {8.0f, 15.0f, 25.0f};
             static const float Energies[] = {50.0f, 100.0f, 180.0f};
-            It->ApplyImpact(Hit.ImpactPoint, Radii[WeaponIndex], Energies[WeaponIndex]);
+            It->ApplyImpact(Hit.ImpactPoint, Radii[WeaponIndex], Energies[WeaponIndex], WeaponIndex);
+            TriggerImpactShake();
             ++ImpactCount;
             CooldownDuration = WeaponIndex == 0 ? 0.35f : (WeaponIndex == 1 ? 0.8f : 1.5f);
             CooldownRemaining = CooldownDuration;
@@ -118,11 +168,30 @@ float AEarthOrbitPawn::GetCooldownRatio() const
 
 void AEarthOrbitPawn::UpdateAimState()
 {
-    if (!Camera) return;
-    const FVector Start = Camera->GetComponentLocation();
-    FHitResult Hit;
+    bAimOnPlanet = false;
+    AimHit = FHitResult();
+    APlayerController* PC = Cast<APlayerController>(GetController());
+    if (!PC) return;
+    FVector Start;
+    FVector Direction;
+    if (!PC->DeprojectMousePositionToWorld(Start, Direction)) return;
     bAimOnPlanet = GetWorld()->LineTraceSingleByChannel(
-        Hit, Start, Start + Camera->GetForwardVector() * 5000.0f, ECC_Visibility);
+        AimHit, Start, Start + Direction * 5000.0f, ECC_Visibility);
+}
+
+float AEarthOrbitPawn::GetCurrentBlastRadius() const
+{
+    static const float Radii[] = {8.0f, 15.0f, 25.0f};
+    return Radii[WeaponIndex];
+}
+
+void AEarthOrbitPawn::TriggerImpactShake()
+{
+    static const float Strengths[] = {0.8f, 1.4f, 3.0f};
+    static const float Durations[] = {0.22f, 0.34f, 0.72f};
+    ShakeStrength = Strengths[WeaponIndex];
+    ShakeDuration = Durations[WeaponIndex];
+    ShakeTimeRemaining = ShakeDuration;
 }
 
 void AEarthOrbitPawn::SelectWeapon(int32 Index)
