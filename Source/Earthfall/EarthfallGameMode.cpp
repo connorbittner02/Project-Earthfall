@@ -4,6 +4,8 @@
 #include "EarthfallHUD.h"
 #include "Engine/DirectionalLight.h"
 #include "Components/DirectionalLightComponent.h"
+#include "Engine/SkyLight.h"
+#include "Components/SkyLightComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "UObject/ConstructorHelpers.h"
@@ -29,6 +31,14 @@ void AEarthfallGameMode::BeginPlay()
         LightDirection.Rotation().Vector() * -1000.0f, LightDirection.Rotation(), Params);
     if (Sun)
     {
-        Sun->GetLightComponent()->SetIntensity(8.0f);
+        Sun->GetLightComponent()->SetIntensity(3.0f);
+    }
+    ASkyLight* Fill = GetWorld()->SpawnActor<ASkyLight>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
+    if (Fill)
+    {
+        Fill->GetLightComponent()->SetMobility(EComponentMobility::Movable);
+        Fill->GetLightComponent()->SetIntensity(0.22f);
+        Fill->GetLightComponent()->SetLightColor(FLinearColor(0.12f, 0.20f, 0.34f));
+        Fill->GetLightComponent()->RecaptureSky();
     }
 }

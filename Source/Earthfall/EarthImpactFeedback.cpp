@@ -51,13 +51,14 @@ AEarthImpactFeedback::AEarthImpactFeedback()
     SetLifeSpan(Lifetime);
 }
 
-void AEarthImpactFeedback::InitFeedback(float ImpactRadius, FLinearColor InAccentColor, float InLifetime, bool bShowBeam, float FlashIntensity)
+void AEarthImpactFeedback::InitFeedback(float ImpactRadius, FLinearColor InAccentColor, float InLifetime, bool bShowBeam, float FlashIntensity, bool bInImplosion)
 {
     AccentColor = InAccentColor;
     Lifetime = FMath::Max(0.1f, InLifetime);
     PeakFlashIntensity = FlashIntensity;
     ExpansionRadius = ImpactRadius * 3.2f;
     Age = 0.0f;
+    bImplosion = bInImplosion;
     SetLifeSpan(Lifetime);
     Flash->SetLightColor(AccentColor);
     Flash->SetIntensity(FlashIntensity);
@@ -77,7 +78,8 @@ void AEarthImpactFeedback::Tick(float DeltaSeconds)
     Age += DeltaSeconds;
     const float Alpha = FMath::Clamp(Age / Lifetime, 0.0f, 1.0f);
     const float Fade = 1.0f - Alpha;
-    Ring->SetRelativeScale3D(FVector(FMath::Lerp(0.035f, ExpansionRadius / 90.0f, Alpha)));
+    const float RadiusScale = FMath::Lerp(0.035f, ExpansionRadius / 90.0f, bImplosion ? 1.0f - Alpha : Alpha);
+    Ring->SetRelativeScale3D(FVector(RadiusScale));
     if (RingMaterial) RingMaterial->SetScalarParameterValue(TEXT("Opacity"), Fade);
     Flash->SetIntensity(FMath::Lerp(PeakFlashIntensity, 0.0f, Alpha));
     if (OrbitalBeam->IsVisible() && BeamMaterial) BeamMaterial->SetScalarParameterValue(TEXT("Opacity"), Fade * 0.8f);

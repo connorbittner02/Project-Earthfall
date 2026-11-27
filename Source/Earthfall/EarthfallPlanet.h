@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "ProceduralMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "EarthfallPlanet.generated.h"
 
 UCLASS()
@@ -33,6 +34,18 @@ private:
 
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<USceneComponent> Root;
+    UPROPERTY(VisibleAnywhere)
+    TObjectPtr<class UStaticMeshComponent> AtmosphereShell;
+    UPROPERTY(VisibleAnywhere)
+    TObjectPtr<class UProceduralMeshComponent> CloudLayer;
+    UPROPERTY(Transient)
+    TObjectPtr<class UTexture2D> SurfaceTexture;
+    UPROPERTY(Transient)
+    TObjectPtr<class UMaterialInstanceDynamic> SurfaceMaterialInstance;
+    UPROPERTY(Transient)
+    TObjectPtr<class UMaterialInstanceDynamic> AtmosphereMaterialInstance;
+    UPROPERTY(Transient)
+    TObjectPtr<class UMaterialInstanceDynamic> CloudMaterialInstance;
     TArray<FVector> BaseVertices;
     TArray<FVector> DeformedVertices;
     TArray<int32> Triangles;
@@ -40,9 +53,19 @@ private:
     TArray<FVector2D> UVs;
     TArray<FLinearColor> VertexColors;
     TArray<FLinearColor> BaseVertexColors;
+    TArray<float> CloudDensity;
+    TArray<float> BaseCloudDensity;
+    TArray<FVector> CloudVertices;
+    TArray<FLinearColor> CloudColors;
+    TArray<FColor> SurfaceTexturePixels;
     TArray<float> HeatValues;
     TArray<FProcMeshTangent> Tangents;
     float HeatUpdateAccumulator = 0.0f;
+    float CloudUpdateAccumulator = 0.0f;
 
     void BuildPlanetMesh();
+    void BuildProceduralSurfaceTexture();
+    void RefreshSurfaceVertexColors();
+    void BuildAtmosphereAndCloudShells();
+    void ClearCloudsAtImpact(const FVector& LocalDirection, float Radius);
 };
