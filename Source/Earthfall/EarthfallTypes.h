@@ -314,10 +314,19 @@ struct FEarthfallToolSpec
 /** The three tabs of the command dock. Tab 0 is the orbital arsenal above. */
 namespace EarthfallTools
 {
-	constexpr int32 TabCount = 3;
+	constexpr int32 TabCount = 4;
 	constexpr int32 TabOrbital = 0;
 	constexpr int32 TabNature = 1;
 	constexpr int32 TabDiplomacy = 2;
+	constexpr int32 TabCiv = 3;
+
+	/** Slots on the CIVILIZATION tab. */
+	constexpr int32 DropResources = 0;
+	constexpr int32 TechUplift = 1;
+	constexpr int32 Command = 2;
+	constexpr int32 OrderAttack = 3;
+	constexpr int32 OrderMobilize = 4;
+	constexpr int32 OrderEvacuate = 5;
 
 	/** Slots on the BIO & NATURE tab. */
 	constexpr int32 PlagueRain = 0;
@@ -336,13 +345,13 @@ namespace EarthfallTools
 
 	inline const TCHAR* TabName(int32 Tab)
 	{
-		static const TCHAR* Names[TabCount] = {TEXT("ORBITAL & NUCLEAR"), TEXT("BIO & NATURE"), TEXT("DIPLOMACY & SPAWNERS")};
+		static const TCHAR* Names[TabCount] = {TEXT("ORBITAL & NUCLEAR"), TEXT("BIO & NATURE"), TEXT("DIPLOMACY & SPAWNERS"), TEXT("CIVILIZATION")};
 		return Names[FMath::Clamp(Tab, 0, TabCount - 1)];
 	}
 
 	inline const TCHAR* TabShortName(int32 Tab)
 	{
-		static const TCHAR* Names[TabCount] = {TEXT("ORBITAL"), TEXT("NATURE"), TEXT("DIPLOMACY")};
+		static const TCHAR* Names[TabCount] = {TEXT("ORBITAL"), TEXT("NATURE"), TEXT("DIPLOMACY"), TEXT("CIV")};
 		return Names[FMath::Clamp(Tab, 0, TabCount - 1)];
 	}
 
@@ -373,6 +382,15 @@ namespace EarthfallTools
 			{TEXT("STRIKE GROUP"), TEXT("NAVAL / AIR"), TEXT("Spawns a strike group at sea; it sails for the nearest hostile coast and bombards it."), FLinearColor(0.85f, 0.88f, 0.95f), 1.5f},
 			{TEXT("REBEL INSURGENCY"), TEXT("TOPPLE A GOVERNMENT"), TEXT("Starts an uprising inside the nation you click."), FLinearColor(1.0f, 0.62f, 0.20f), 1.5f},
 		};
+		static const FEarthfallToolSpec Civ[] = {
+			{TEXT("DROP RESOURCES"), TEXT("INDUSTRY / REPAIR"), TEXT("Repairs the nation's grid, speeds its cities' growth and funds a bigger military."), FLinearColor(1.0f, 0.85f, 0.35f), 1.0f},
+			{TEXT("TECH UPLIFT"), TEXT("ADVANCE ONE TIER"), TEXT("Conventional > Hypersonic > Orbital Defense > Fusion Shielded."), FLinearColor(0.45f, 0.95f, 1.0f), 1.0f},
+			{TEXT("COMMAND NATION"), TEXT("SELECT WHO OBEYS"), TEXT("Click a nation to command it. Then give it one of the three orders below."), FLinearColor(0.90f, 0.94f, 1.0f), 0.3f},
+			{TEXT("ORDER: ATTACK"), TEXT("CLICK THE TARGET"), TEXT("The commanded nation sends armies, fleets and a missile salvo at the nation you click."), FLinearColor(1.0f, 0.30f, 0.22f), 1.0f},
+			{TEXT("ORDER: MOBILIZE"), TEXT("FORTIFY / PATROL"), TEXT("The commanded nation raises readiness, reloads interceptors faster and puts out patrols."), FLinearColor(0.55f, 0.85f, 1.0f), 1.0f},
+			{TEXT("ORDER: EVACUATE"), TEXT("HOLD FIRE / REBUILD"), TEXT("The commanded nation ceases fire, repairs its grid and rebuilds."), FLinearColor(0.60f, 0.95f, 0.70f), 1.0f},
+		};
+		if (Tab == TabCiv) return Civ[FMath::Clamp(Slot, 0, 5)];
 		if (Tab == TabNature) return Nature[FMath::Clamp(Slot, 0, 5)];
 		return Diplomacy[FMath::Clamp(Slot, 0, 4)];
 	}

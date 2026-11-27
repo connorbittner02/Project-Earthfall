@@ -99,6 +99,7 @@ void UEarthfallSandboxSubsystem::ResetSandbox()
 	DebrisNewsLevel = 0.0f;
 	PendingWarCountry = 0;
 	InterceptCount = 0;
+	CommandedFaction = -1;
 	BioZones.Reset();
 	Routes.Reset();
 	EmpZones.Reset();
@@ -133,6 +134,7 @@ void UEarthfallSandboxSubsystem::BuildFactions()
 		Faction.Bloc = Power.Bloc;
 		// The three great powers start a tier ahead.
 		Faction.TechTier = Power.Military >= 85.0f ? 1 : 0;
+		People->SetCountryTech(CountryId, Faction.TechTier);
 		FactionByCountry.Add(CountryId, Factions.Num() - 1);
 	}
 	for (int32 A = 0; A < Factions.Num(); ++A)
@@ -250,6 +252,7 @@ bool UEarthfallSandboxSubsystem::GetFactionInfo(int32 CountryId, FEarthfallFacti
 	OutInfo.MilitaryStrength = Faction.MilitaryStrength;
 	OutInfo.NuclearStockpile = Faction.NuclearStockpile;
 	OutInfo.TechTier = Faction.TechTier;
+	OutInfo.Orders = Faction.Orders;
 	OutInfo.Infected = GetCountryInfected(CountryId);
 	OutInfo.AtWarWith.Reset();
 	OutInfo.Allies.Reset();
@@ -333,6 +336,7 @@ void UEarthfallSandboxSubsystem::Tick(float DeltaTime)
 	TickBio(DeltaTime);
 	TickTraffic(DeltaTime);
 	TickBorders(DeltaTime);
+	TickSkirmishes(DeltaTime);
 	BuildMarkers();
 }
 
@@ -415,6 +419,8 @@ void UEarthfallSandboxSubsystem::TickWars(float DeltaTime)
 			continue;
 		}
 
+		// Ordered to evacuate: it defends itself and nothing more.
+		if (Faction.bHoldFire) continue;
 		// No power, no launches: knocking out the grid silences a nation's missiles.
 		const float Grid = Stats.GridPercent / 100.0f;
 		Faction.LaunchTimer -= DeltaTime * FMath::Clamp(Grid * 1.4f, 0.0f, 1.0f);
@@ -545,7 +551,12 @@ bool UEarthfallSandboxSubsystem::SpawnUnit(int32 Owner, int32 Target, const FVec
 	Unit.Owner = Owner;
 	Unit.Target = Target;
 	Unit.Direction = From.GetSafeNormal();
-	if (Mode != 2 && FindSeaRoute(Unit.Direction, Factions[Target].Capital, Unit.Path))
+	const bool bLand = Mode == 3 || (Mode == 0 && HasLandRoute(Unit.Direction, Factions[Target].Capital) && FMath::RandBool());
+	if (bLand)
+	{
+		Unit.bArmy = true;
+	}
+	else if (Mode != 2 && FindSeaRoute(Unit.Direction, Factions[Target].Capital, Unit.Path))
 	{
 		Unit.bNaval = true;
 		Unit.Direction = Unit.Path[0];
@@ -585,13 +596,16 @@ void UEarthfallSandboxSubsystem::TickUnits(float DeltaTime)
 		}
 		const FVector& Capital = Factions[Unit.Target].Capital;
 		bool bOnStation = false;
+		const int32 OwnerTier = Factions.IsValidIndex(Unit.Owner) ? Factions[Unit.Owner].TechTier : 0;
+		// Every tech tier makes a nation's forces a quarter faster.
+		const float TechSpeed = 1.0f + 0.25f * OwnerTier;
 		if (Unit.bNaval)
 		{
 			// Waypoint to waypoint, every one of them open water.
 			if (Unit.PathIndex < Unit.Path.Num())
 			{
 				const FVector& Waypoint = Unit.Path[Unit.PathIndex];
-				Unit.Direction = SlerpDirection(Unit.Direction, Waypoint, UnitSpeed * DeltaTime);
+				Unit.Direction = SlerpDirection(Unit.Direction, Waypoint, UnitSpeed * TechSpeed * DeltaTime);
 				if (FVector::DotProduct(Unit.Direction, Waypoint) > 0.99996) ++Unit.PathIndex;
 			}
 			bOnStation = Unit.PathIndex >= Unit.Path.Num();
@@ -600,7 +614,18 @@ void UEarthfallSandboxSubsystem::TickUnits(float DeltaTime)
 		{
 			const float Range = FMath::Acos(FMath::Clamp(static_cast<float>(FVector::DotProduct(Unit.Direction, Capital)), -1.0f, 1.0f));
 			bOnStation = Range <= 0.11f;
-			if (!bOnStation) Unit.Direction = SlerpDirection(Unit.Direction, Capital, AirWingSpeed * DeltaTime);
+			if (!bOnStation && Unit.bArmy)
+			{
+				// An army marches only where there is ground under it. At a coast it
+				// halts, and shells the capital if that is within artillery range.
+				const FVector Next = SlerpDirection(Unit.Direction, Capital, UnitSpeed * TechSpeed * DeltaTime);
+				if (People && People->GetCountryAtDirection(Next) != 0) Unit.Direction = Next;
+				else bOnStation = Range <= 0.30f;
+			}
+			else if (!bOnStation)
+			{
+				Unit.Direction = SlerpDirection(Unit.Direction, Capital, AirWingSpeed * TechSpeed * DeltaTime);
+			}
 		}
 		if (!bOnStation) continue;
 
@@ -627,7 +652,8 @@ void UEarthfallSandboxSubsystem::TickUnits(float DeltaTime)
 		Aim.FindBestAxisVectors(TangentA, TangentB);
 		const float Angle = FMath::FRandRange(0.0f, 2.0f * PI);
 		Aim = (Aim + (TangentA * FMath::Cos(Angle) + TangentB * FMath::Sin(Angle)) * FMath::FRandRange(0.0f, 0.03f)).GetSafeNormal();
-		FireMissile(Unit.Direction, Unit.bNaval ? 1.004f : 1.03f, Aim, Factions.IsValidIndex(Unit.Owner) ? Factions[Unit.Owner].CountryId : -1, false);
+		FireMissile(Unit.Direction, Unit.bNaval ? 1.004f : (Unit.bArmy ? 1.003f : 1.03f), Aim,
+			Factions.IsValidIndex(Unit.Owner) ? Factions[Unit.Owner].CountryId : -1, false, PickMunition(OwnerTier));
 		if (--Unit.Volleys <= 0) Units.RemoveAtSwap(Index);
 	}
 }
@@ -665,12 +691,21 @@ void UEarthfallSandboxSubsystem::TickDefense(float DeltaTime)
 		{
 			const float Ready = BatteryReadyAt.FindRef(CountryId);
 			const float Alive = Stats.InitialPopulation > 0.0 ? static_cast<float>(Stats.LivingPopulation / Stats.InitialPopulation) : 0.0f;
-			const float Chance = Stats.DefenseReadiness / 100.0f * Alive * FMath::Square(Stats.GridPercent / 100.0f) * 0.85f;
+			float Chance = Stats.DefenseReadiness / 100.0f * Alive * FMath::Square(Stats.GridPercent / 100.0f) * 0.85f;
+			float Reload = 1.6f;
+			if (const int32* DefendingFaction = FactionByCountry.Find(CountryId))
+			{
+				// Each tech tier adds to the kill rate; a fusion shield adds more, and a mobilized nation reloads twice as fast.
+				const FFaction& Owner = Factions[*DefendingFaction];
+				const float Bonus = 0.12f * Owner.TechTier + (Owner.TechTier >= 3 ? 0.15f : 0.0f) + (Owner.bFortified ? 0.20f : 0.0f);
+				Chance = FMath::Min(0.97f, Chance + Bonus * Alive * Stats.GridPercent / 100.0f);
+				if (Owner.bFortified) Reload = 0.8f;
+			}
 			if (WorldTime >= Ready && !IsDefenseBlinded(Target) && FMath::FRand() < Chance)
 			{
 				bKill = true;
 				Defender = Stats.Name.ToUpper();
-				BatteryReadyAt.Add(CountryId, WorldTime + 1.6f);
+				BatteryReadyAt.Add(CountryId, WorldTime + Reload);
 			}
 		}
 		// Defense satellites cover a wide cap of ground beneath them.
@@ -774,11 +809,43 @@ void UEarthfallSandboxSubsystem::BuildMarkers()
 			// A wedge: one ahead, two astern and abeam.
 			const FVector Offset = Ship == 0 ? FVector::ZeroVector : (Side * (Ship == 1 ? 0.55f : -0.55f) - Forward * 0.7f);
 			FEarthfallMarker& Marker = Markers.AddDefaulted_GetRef();
-			Marker.Position = Center + World * Radius * (Unit.bNaval ? 1.004f : 1.03f) + Offset * (Unit.bNaval ? 1.0f : 1.4f);
+			Marker.Position = Center + World * Radius * (Unit.bNaval ? 1.004f : (Unit.bArmy ? 1.003f : 1.03f)) + Offset * (Unit.bNaval || Unit.bArmy ? 1.0f : 1.4f);
 			Marker.Forward = Forward;
-			Marker.Size = Unit.bNaval ? 0.30f : 0.20f;
-			Marker.Stretch = Unit.bNaval ? 2.6f : 5.0f;
-			Marker.Kind = Unit.bNaval ? EarthfallMarkers::Unit : EarthfallMarkers::AirWing;
+			Marker.Size = Unit.bNaval ? 0.30f : (Unit.bArmy ? 0.34f : 0.20f);
+			Marker.Stretch = Unit.bNaval ? 2.6f : (Unit.bArmy ? 1.5f : 5.0f);
+			Marker.Kind = Unit.bNaval ? EarthfallMarkers::Unit : (Unit.bArmy ? EarthfallMarkers::Army : EarthfallMarkers::AirWing);
+		}
+	}
+	// Standing forces: every faction keeps a garrison circling its capital, more
+	// of it once mobilized, and a fusion-shielded capital shimmers cyan.
+	for (int32 Index = 0; Index < Factions.Num(); ++Index)
+	{
+		const FFaction& Faction = Factions[Index];
+		if (Faction.bFallen) continue;
+		const FVector Capital = Transform.TransformVectorNoScale(Faction.Capital);
+		FVector TangentA;
+		FVector TangentB;
+		Capital.FindBestAxisVectors(TangentA, TangentB);
+		const int32 Patrols = Faction.bFortified ? 6 : 2;
+		for (int32 Patrol = 0; Patrol < Patrols; ++Patrol)
+		{
+			const float Angle = WorldTime * 0.25f + Index * 1.7f + 2.0f * PI * Patrol / Patrols;
+			const FVector Outward = TangentA * FMath::Cos(Angle) + TangentB * FMath::Sin(Angle);
+			FEarthfallMarker& Marker = Markers.AddDefaulted_GetRef();
+			Marker.Position = Center + (Capital * Radius + Outward * (Faction.bFortified ? 2.6f : 1.5f)).GetSafeNormal() * Radius * 1.003f;
+			Marker.Forward = FVector::CrossProduct(Capital, Outward);
+			Marker.Size = 0.20f;
+			Marker.Stretch = 1.5f;
+			Marker.Kind = EarthfallMarkers::Army;
+		}
+		if (Faction.TechTier >= 3)
+		{
+			FEarthfallMarker& Marker = Markers.AddDefaulted_GetRef();
+			Marker.Position = Center + Capital * Radius * 1.004f;
+			Marker.Forward = Capital;
+			Marker.Size = 6.0f * (1.0f + 0.06f * FMath::Sin(WorldTime * 2.3f + Index));
+			Marker.Stretch = 0.45f;
+			Marker.Kind = EarthfallMarkers::Shield;
 		}
 	}
 	for (const FInterceptor& Interceptor : Interceptors)
@@ -878,6 +945,10 @@ FString UEarthfallSandboxSubsystem::UseTool(int32 Tab, int32 Slot, const FVector
 		case EarthfallTools::CureRain: return UseCure(LocalDirection);
 		default: break;
 		}
+	}
+	else if (Tab == EarthfallTools::TabCiv)
+	{
+		return UseCivTool(Slot, LocalDirection, Pawn);
 	}
 	else if (Tab == EarthfallTools::TabDiplomacy)
 	{
@@ -1442,4 +1513,152 @@ bool UEarthfallSandboxSubsystem::IsDefenseBlinded(const FVector& LocalDirection)
 		if (WorldTime < Zone.Value && FVector::DotProduct(FVector(Zone.Key.X, Zone.Key.Y, Zone.Key.Z), LocalDirection) >= Zone.Key.W) return true;
 	}
 	return false;
+}
+
+// ---------------------------------------------------------------------------
+// Civilization: drops, armies and direct orders
+// ---------------------------------------------------------------------------
+int32 UEarthfallSandboxSubsystem::GetArmyCount() const
+{
+	int32 Count = 0;
+	for (const FUnit& Unit : Units) Count += Unit.bArmy ? 1 : 0;
+	return Count;
+}
+
+int32 UEarthfallSandboxSubsystem::GetCommandedCountry() const
+{
+	return Factions.IsValidIndex(CommandedFaction) ? Factions[CommandedFaction].CountryId : 0;
+}
+
+bool UEarthfallSandboxSubsystem::HasLandRoute(const FVector& From, const FVector& To) const
+{
+	const UEarthfallPopulationSubsystem* People = Population();
+	if (!People) return false;
+	for (int32 Step = 1; Step < 24; ++Step)
+	{
+		if (People->GetCountryAtDirection(FVector::SlerpNormals(From, To, Step / 24.0f)) == 0) return false;
+	}
+	return true;
+}
+
+void UEarthfallSandboxSubsystem::SetTechTier(int32 Faction, int32 Tier)
+{
+	if (!Factions.IsValidIndex(Faction)) return;
+	Factions[Faction].TechTier = FMath::Clamp(Tier, 0, 3);
+	if (UEarthfallPopulationSubsystem* People = Population()) People->SetCountryTech(Factions[Faction].CountryId, Factions[Faction].TechTier);
+}
+
+void UEarthfallSandboxSubsystem::TickSkirmishes(float DeltaTime)
+{
+	SkirmishTimer += DeltaTime;
+	if (SkirmishTimer < 0.5f) return;
+	SkirmishTimer = 0.0f;
+	// Hostile units that meet fight it out: the weaker military loses its unit.
+	for (int32 A = Units.Num() - 1; A >= 0; --A)
+	{
+		for (int32 B = A - 1; B >= 0; --B)
+		{
+			if (!Units.IsValidIndex(A) || !AreAtWar(Units[A].Owner, Units[B].Owner)) continue;
+			if (FVector::DotProduct(Units[A].Direction, Units[B].Direction) < 0.9992 || FMath::FRand() > 0.35f) continue;
+			const bool bALoses = Factions[Units[A].Owner].MilitaryStrength * FMath::FRandRange(0.6f, 1.4f)
+				< Factions[Units[B].Owner].MilitaryStrength * FMath::FRandRange(0.6f, 1.4f);
+			const int32 Loser = bALoses ? A : B;
+			UE_LOG(LogEarthfallSandbox, Display, TEXT("EARTHFALL_SKIRMISH %s unit destroyed by %s"),
+				*Factions[Units[Loser].Owner].Code, *Factions[Units[bALoses ? B : A].Owner].Code);
+			Units.RemoveAtSwap(Loser);
+			break;
+		}
+	}
+}
+
+FString UEarthfallSandboxSubsystem::UseCivTool(int32 Slot, const FVector& LocalDirection, AEarthOrbitPawn* Pawn)
+{
+	UEarthfallPopulationSubsystem* People = Population();
+	if (!People) return TEXT("NO PLANETARY CONTACT");
+	if (!bFactionsBuilt) BuildFactions();
+	const int32 CountryId = People->GetCountryAtDirection(LocalDirection);
+	const int32 Clicked = FactionFor(CountryId, LocalDirection);
+
+	if (Slot == EarthfallTools::DropResources)
+	{
+		if (Clicked < 0) return TEXT("DROP RESOURCES  //  CLICK A NATION");
+		FFaction& Faction = Factions[Clicked];
+		++Faction.Resources;
+		Faction.MilitaryStrength = FMath::Min(100.0f, Faction.MilitaryStrength + 12.0f);
+		Faction.GroupTimer = FMath::Min(Faction.GroupTimer, 2.0f);
+		People->RepairCountry(CountryId);
+		People->BoostCountryGrowth(CountryId, 10.0f, 40.0f);
+		People->PostDispatch(FString::Printf(TEXT("[RESOURCE DROP] %s: GRID REPAIRED  //  INDUSTRY SURGING  //  MILITARY NOW %.0f"), *Faction.Name, Faction.MilitaryStrength), 5);
+		UE_LOG(LogEarthfallSandbox, Display, TEXT("EARTHFALL_CIV resources dropped on %s (military %.0f)"), *Faction.Code, Faction.MilitaryStrength);
+		return FString::Printf(TEXT("RESOURCES  //  %s INDUSTRY SURGING"), *Faction.Name);
+	}
+	if (Slot == EarthfallTools::TechUplift)
+	{
+		if (Clicked < 0) return TEXT("TECH UPLIFT  //  CLICK A NATION");
+		FFaction& Faction = Factions[Clicked];
+		if (Faction.TechTier >= 3) return FString::Printf(TEXT("%s IS ALREADY FUSION SHIELDED"), *Faction.Name);
+		SetTechTier(Clicked, Faction.TechTier + 1);
+		People->PostDispatch(FString::Printf(TEXT("[TECH UPLIFT] %s REACHES %s TIER"), *Faction.Name, TechTierLabel(Faction.TechTier)), 6);
+		UE_LOG(LogEarthfallSandbox, Display, TEXT("EARTHFALL_CIV %s uplifted to tier %d (%s)"), *Faction.Code, Faction.TechTier + 1, TechTierLabel(Faction.TechTier));
+		return FString::Printf(TEXT("TECH UPLIFT  //  %s IS NOW %s"), *Faction.Name, TechTierLabel(Faction.TechTier));
+	}
+	if (Slot == EarthfallTools::Command)
+	{
+		if (Clicked < 0) return TEXT("COMMAND  //  CLICK A NATION TO COMMAND");
+		CommandedFaction = Clicked;
+		// Its borders light up and its dossier opens.
+		if (Pawn) Pawn->InspectDirection(LocalDirection);
+		return FString::Printf(TEXT("COMMANDING %s  //  CHOOSE AN ORDER"), *Factions[Clicked].Name);
+	}
+
+	if (!Factions.IsValidIndex(CommandedFaction)) return TEXT("NO NATION UNDER COMMAND  //  USE COMMAND NATION FIRST");
+	FFaction& Commanded = Factions[CommandedFaction];
+	if (Slot == EarthfallTools::OrderAttack)
+	{
+		if (Clicked < 0 || Clicked == CommandedFaction) return TEXT("ORDER ATTACK  //  CLICK THE NATION TO ATTACK");
+		const int32 Attacker = CommandedFaction;
+		DeclareWar(Attacker, Clicked, TEXT("BY ORDER FROM ORBIT"));
+		// DeclareWar and FactionFor can grow the faction array, so index it afresh.
+		Factions[Attacker].bHoldFire = false;
+		Factions[Attacker].Orders = FString::Printf(TEXT("ATTACK %s"), *Factions[Clicked].Code);
+		Factions[Attacker].LaunchTimer = 0.4f;
+		const FVector From = Factions[Attacker].Capital;
+		const bool bArmy = HasLandRoute(From, Factions[Clicked].Capital) && SpawnUnit(Attacker, Clicked, From, 3);
+		const bool bFleet = SpawnUnit(Attacker, Clicked, From, 1);
+		SpawnUnit(Attacker, Clicked, From, 2);
+		// An opening salvo of specialized shells.
+		for (int32 Shot = 0; Shot < 3; ++Shot) LaunchMissile(Factions[Attacker], Factions[Clicked], false);
+		People->PostDispatch(FString::Printf(TEXT("[ORDER: ATTACK] %s INVADES %s  //  %s%sAIR WINGS AND A MISSILE SALVO COMMITTED"),
+			*Factions[Attacker].Name, *Factions[Clicked].Name, bArmy ? TEXT("ARMIES, ") : TEXT(""), bFleet ? TEXT("FLEETS, ") : TEXT("")), 8);
+		UE_LOG(LogEarthfallSandbox, Display, TEXT("EARTHFALL_ORDER %s attack %s: army=%d fleet=%d units=%d"),
+			*Factions[Attacker].Code, *Factions[Clicked].Code, bArmy ? 1 : 0, bFleet ? 1 : 0, Units.Num());
+		return FString::Printf(TEXT("ORDER  //  %s ATTACKS %s"), *Factions[Attacker].Name, *Factions[Clicked].Name);
+	}
+	if (Slot == EarthfallTools::OrderMobilize)
+	{
+		Commanded.bFortified = true;
+		Commanded.bHoldFire = false;
+		Commanded.Orders = TEXT("MOBILIZED");
+		Commanded.MilitaryStrength = FMath::Min(100.0f, Commanded.MilitaryStrength + 8.0f);
+		BatteryReadyAt.Remove(Commanded.CountryId);
+		People->PostDispatch(FString::Printf(TEXT("[ORDER: MOBILIZE] %s FORTIFIES  //  PATROLS OUT  //  INTERCEPTORS ON FAST RELOAD"), *Commanded.Name), 6);
+		UE_LOG(LogEarthfallSandbox, Display, TEXT("EARTHFALL_ORDER %s mobilize"), *Commanded.Code);
+		return FString::Printf(TEXT("ORDER  //  %s MOBILIZES"), *Commanded.Name);
+	}
+	if (Slot == EarthfallTools::OrderEvacuate)
+	{
+		const int32 Evacuating = CommandedFaction;
+		Factions[Evacuating].bHoldFire = true;
+		Factions[Evacuating].bFortified = false;
+		Factions[Evacuating].Orders = TEXT("EVACUATING");
+		// Its forces come home; whoever is attacking it is not obliged to stop.
+		Units.RemoveAll([Evacuating](const FUnit& Unit) { return Unit.Owner == Evacuating; });
+		People->RepairCountry(Factions[Evacuating].CountryId);
+		People->BoostCountryGrowth(Factions[Evacuating].CountryId, 6.0f, 60.0f);
+		People->PostDispatch(FString::Printf(TEXT("[ORDER: EVACUATE] %s CEASES FIRE  //  GRID CREWS OUT  //  REBUILDING"), *Factions[Evacuating].Name), 6);
+		UE_LOG(LogEarthfallSandbox, Display, TEXT("EARTHFALL_ORDER %s evacuate: own units left=%d"), *Factions[Evacuating].Code,
+			Units.FilterByPredicate([Evacuating](const FUnit& Unit) { return Unit.Owner == Evacuating; }).Num());
+		return FString::Printf(TEXT("ORDER  //  %s EVACUATES AND REBUILDS"), *Factions[Evacuating].Name);
+	}
+	return TEXT("UNKNOWN ORDER");
 }

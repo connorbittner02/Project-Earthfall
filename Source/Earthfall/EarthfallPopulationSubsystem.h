@@ -157,10 +157,14 @@ public:
 	/** Multiply one nation's growth rate for a while (resource drops, uplift). */
 	void BoostCountryGrowth(int32 CountryId, float Multiplier, float Seconds);
 	/**
-	 * One byte per population cell for the surface shader: 1 + 254 * settled people / baseline / MaxGrowth.
-	 * Zero is never written, so an unbound texture reads as 'no data'.
+	 * One pixel per population cell for the surface shader. R = 1 + 254 * settled people / baseline / MaxGrowth
+	 * (never zero, so an unbound texture reads as 'no data'); G = the nation's tech tier * 85.
 	 */
-	void FillCityGrowth(TArray<uint8>& Out) const;
+	void FillCityGrowth(TArray<FColor>& Out) const;
+	/** Tech tier 0..3 of a nation, for the city-light colour. */
+	void SetCountryTech(int32 CountryId, int32 Tier);
+	/** Restore a whole nation's grid and bring half its displaced home. */
+	void RepairCountry(int32 CountryId);
 	static int32 GrowthGridWidth() { return GridWidth; }
 	static int32 GrowthGridHeight() { return GridHeight; }
 	/** The largest hub city in a nation: its name, tier (0 city, 1 megacity, 2 arcology) and size against baseline. */
@@ -220,6 +224,7 @@ private:
 		/** Strain from refugees arriving over the border, added to this nation's own. */
 		float BorderStress = 0.0f;
 		float GrowthBoost = 1.0f;
+		int32 TechTier = 0;
 		float GrowthBoostSeconds = 0.0f;
 	};
 

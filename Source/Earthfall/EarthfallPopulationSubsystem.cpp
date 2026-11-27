@@ -1062,7 +1062,7 @@ void UEarthfallPopulationSubsystem::MeasureCities(bool bReset)
 	}
 }
 
-void UEarthfallPopulationSubsystem::FillCityGrowth(TArray<uint8>& Out) const
+void UEarthfallPopulationSubsystem::FillCityGrowth(TArray<FColor>& Out) const
 {
 	Out.SetNumUninitialized(Cells.Num());
 	for (int32 Index = 0; Index < Cells.Num(); ++Index)
@@ -1071,7 +1071,8 @@ void UEarthfallPopulationSubsystem::FillCityGrowth(TArray<uint8>& Out) const
 		// Empty cells (ocean, ice) carry baseline so they never dim a coast by bilinear bleed.
 		const double Ratio = Cell.BaselinePopulation > 0.0
 			? FMath::Max(0.0, Cell.LivingPopulation - Cell.DisplacedPopulation) / Cell.BaselinePopulation : 1.0;
-		Out[Index] = static_cast<uint8>(1 + FMath::RoundToInt32(254.0 * FMath::Clamp(Ratio / MaxGrowth, 0.0, 1.0)));
+		const int32 Tier = CellCountry.Num() == Cells.Num() ? CountryStates[CellCountry[Index]].TechTier : 0;
+		Out[Index] = FColor(static_cast<uint8>(1 + FMath::RoundToInt32(254.0 * FMath::Clamp(Ratio / MaxGrowth, 0.0, 1.0))), static_cast<uint8>(Tier * 85), 0, 255);
 	}
 }
 
@@ -1087,4 +1088,22 @@ bool UEarthfallPopulationSubsystem::GetLargestCity(int32 CountryId, FString& Out
 	OutTier = Best->Tier;
 	OutGrowth = static_cast<float>(PopulationInRadius(Best->Direction, 0.035f) / Best->InitialRegion);
 	return true;
+}
+
+void UEarthfallPopulationSubsystem::SetCountryTech(int32 CountryId, int32 Tier)
+{
+	if (CountryStates.IsValidIndex(CountryId)) CountryStates[CountryId].TechTier = FMath::Clamp(Tier, 0, 3);
+}
+
+void UEarthfallPopulationSubsystem::RepairCountry(int32 CountryId)
+{
+	if (CountryId <= 0 || CellCountry.Num() != Cells.Num()) return;
+	for (int32 Index = 0; Index < Cells.Num(); ++Index)
+	{
+		if (CellCountry[Index] != CountryId) continue;
+		Cells[Index].PowerGridHealth = 1.0f;
+		Cells[Index].HazardHeat = 0.0f;
+		Cells[Index].DisplacedPopulation *= 0.5;
+	}
+	RefreshPopulationTotals();
 }

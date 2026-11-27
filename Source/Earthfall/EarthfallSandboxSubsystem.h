@@ -21,7 +21,9 @@ namespace EarthfallMarkers
 	constexpr uint8 Shipping = 5;    // freighters on the sea lanes
 	constexpr uint8 Combat = 6;      // fighting in a rage or insurgency zone
 	constexpr uint8 AirWing = 7;     // air strike wings crossing land
-	constexpr uint8 Count = 8;
+	constexpr uint8 Shield = 8;      // fusion shield over a tier-4 capital
+	constexpr uint8 Army = 9;        // ground armies and garrisons
+	constexpr uint8 Count = 10;
 }
 
 /** One light for AEarthfallSandboxView to draw this frame. World space. */
@@ -47,6 +49,8 @@ struct FEarthfallFactionInfo
 	TArray<FString> Allies;
 	/** People currently infected inside the nation's outbreaks. */
 	double Infected = 0.0;
+	/** The standing order from Command mode: NONE, ATTACK <name>, MOBILIZED or EVACUATING. */
+	FString Orders = TEXT("NONE");
 };
 
 /**
@@ -96,6 +100,9 @@ public:
 	int32 GetActiveWarCount() const;
 	static const TCHAR* TechTierLabel(int32 Tier);
 	int32 GetFleetCount() const;
+	int32 GetArmyCount() const;
+	int32 GetUnitCount() const { return Units.Num(); }
+	int32 GetCommandedCountry() const;
 	int32 GetBorderCrisisCount() const { return BorderCrises.Num(); }
 	double GetInfected() const { return InfectedNow; }
 	double GetCured() const { return CuredTotal; }
@@ -115,6 +122,10 @@ private:
 		int32 NuclearStockpile = 0;
 		int32 Bloc = 0;
 		int32 TechTier = 0;
+		int32 Resources = 0;
+		bool bFortified = false;
+		bool bHoldFire = false;
+		FString Orders = TEXT("NONE");
 		TArray<int32> AtWar;
 		TArray<int32> Allies;
 		float LaunchTimer = 2.0f;
@@ -137,6 +148,8 @@ private:
 		float FireTimer = 0.0f;
 		/** A naval fleet keeps to water along Path; an air wing flies the great circle. */
 		bool bNaval = false;
+		/** A ground army: marches overland and stops at the sea. */
+		bool bArmy = false;
 		TArray<FVector> Path;
 		int32 PathIndex = 0;
 	};
@@ -228,6 +241,9 @@ private:
 	float DebrisNewsLevel = 0.0f;
 	float DiplomacyTimer = 0.0f;
 	int32 PendingWarCountry = 0;
+	/** The faction Command mode is giving orders to, or -1. */
+	int32 CommandedFaction = -1;
+	float SkirmishTimer = 0.0f;
 	int32 InterceptCount = 0;
 	bool bFactionsBuilt = false;
 
@@ -247,6 +263,7 @@ private:
 	void LaunchMissile(FFaction& From, const FFaction& At, bool bNuclear);
 	/** Mode 0 picks a fleet when the target can be reached by sea, 1 forces a fleet, 2 an air wing. */
 	bool SpawnUnit(int32 Owner, int32 Target, const FVector& From, int32 Mode = 0);
+	/** Mode 3 forces a ground army. */
 	void FireMissile(const FVector& FromDirection, float FromAltitudeScale, const FVector& AimDirection, int32 AttackerCountry, bool bNuclear, int32 Munition = 0);
 	/** The shell a faction of this tech tier loads for one shot. */
 	static int32 PickMunition(int32 TechTier);
@@ -268,6 +285,11 @@ private:
 	FString UseRage(const FVector& LocalDirection);
 	FString UseCure(const FVector& LocalDirection);
 	FString UseInsurgency(const FVector& LocalDirection);
+	FString UseCivTool(int32 Slot, const FVector& LocalDirection, AEarthOrbitPawn* Pawn);
+	void SetTechTier(int32 Faction, int32 Tier);
+	/** True if the great circle between two points never leaves land. */
+	bool HasLandRoute(const FVector& From, const FVector& To) const;
+	void TickSkirmishes(float DeltaTime);
 	void AddBioZone(const FVector& Direction, float Radius, float Strength, int32 Kind, int32 Generation);
 	void TickBio(float DeltaTime);
 	void BuildRoutes();

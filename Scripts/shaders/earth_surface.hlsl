@@ -6,7 +6,7 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
             float3 DayTex, float3 NightTex, float3 NormalTex, float3 MasksTex,
             float3 Mask, float2 PomUV, Texture2D AshTex, SamplerState AshTexSampler,
             Texture2D CraterTex, SamplerState CraterTexSampler, float3 Wave, float3 Fire, float3 Plague,
-            float Growth, Texture2D NightObj, SamplerState NightObjSampler,
+            float3 Growth, Texture2D NightObj, SamplerState NightObjSampler,
             float CountryId, float4 Inspect, float4 Pom, float3 Sun, float Time, float4 CloudLayer, float4 Tuning, float4 Climate,
             float4 A0, float4 B0, float4 C0, float4 A1, float4 B1, float4 C1,
             float4 A2, float4 B2, float4 C2, float4 A3, float4 B3, float4 C3)
@@ -224,7 +224,9 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
     // Cities follow their people. Growth is settled population over baseline
     // (1 = unchanged, up to 3): a shrinking city dims, a thriving one brightens
     // and its lights spread outward over the surrounding land.
-    float growth = Growth < 0.002 ? 1.0 : saturate((Growth * 255.0 - 1.0) / 254.0) * 3.0;
+    float growth = Growth.r < 0.002 ? 1.0 : saturate((Growth.r * 255.0 - 1.0) / 254.0) * 3.0;
+    // Tech tier 0..3 in G: each tier burns whiter and bluer, and a little brighter.
+    float tech = saturate(Growth.g) * 3.0;
     float sprawl = saturate((growth - 1.0) / 1.2);
     float3 cityTex = NightTex;
     [branch] if (sprawl > 0.01)
@@ -241,6 +243,8 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
         cityTex = max(NightTex, wide * (0.50 + 0.45 * sprawl));
     }
     float cityLevel = growth < 1.0 ? pow(growth, 0.8) : 1.0 + 1.1 * (growth - 1.0);
+    cityColour = lerp(cityColour, float3(0.62, 0.90, 1.00), saturate(tech / 3.0) * 0.85);
+    cityLevel *= 1.0 + 0.22 * tech;
     float3 emissive = cityTex * cityLevel * cityDetail * cityColour * 1.30 * night * (1.0 - blackout) * Tuning.y * (1.0 - 0.7 * soot);
 
     // --- Magma: ridged-noise veins that narrow and dim as the crater cools.

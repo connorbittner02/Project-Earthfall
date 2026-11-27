@@ -25,6 +25,8 @@ const FLinearColor MarkerTints[] = {
 	FLinearColor(0.55f, 1.00f, 0.80f, 2.8f),  // shipping: sea green
 	FLinearColor(1.00f, 0.22f, 0.12f, 4.0f),  // combat and unrest: red
 	FLinearColor(1.00f, 0.95f, 0.55f, 5.0f),  // air strike wings: pale yellow
+	FLinearColor(0.30f, 0.90f, 1.00f, 0.42f), // fusion shield: a faint cyan dome
+	FLinearColor(0.55f, 1.00f, 0.35f, 4.0f),  // ground armies: green
 };
 constexpr int32 MarkerKindCount = UE_ARRAY_COUNT(MarkerTints);
 }

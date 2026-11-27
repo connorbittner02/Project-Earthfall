@@ -287,7 +287,7 @@ void AEarthfallHUD::DrawArsenalPanel(const AEarthOrbitPawn* Pawn, float ScreenWi
 			: (bHovered ? FLinearColor(0.06f, 0.12f, 0.18f, 0.95f) : FLinearColor(0.02f, 0.04f, 0.07f, 0.95f)));
 		Fill(TabX, Y, TabWidth, Px(bActive ? 3.0f : 1.0f), bActive ? Cyan : PanelEdge);
 		if (Tab > 0) Fill(TabX, Y + Px(6.0f), Px(1.0f), TabHeight - Px(12.0f), PanelEdge);
-		Text(EarthfallTools::TabShortName(Tab), TabX + TabWidth * 0.5f, Y + Px(9.0f), 12.5f, bActive ? White : Dim, EFace::Bold, EAlign::Center);
+		Text(EarthfallTools::TabShortName(Tab), TabX + TabWidth * 0.5f, Y + Px(10.0f), 11.0f, bActive ? White : Dim, EFace::Bold, EAlign::Center);
 	}
 
 	const int32 ActiveSlot = Pawn->GetToolSlot(ActiveTab);
@@ -553,7 +553,7 @@ void AEarthfallHUD::DrawCountryDossier(const AEarthOrbitPawn* Pawn)
 	int32 CityTier = 0;
 	float CityGrowth = 1.0f;
 	const bool bCity = Population->GetLargestCity(Stats.Id, CityName, CityTier, CityGrowth);
-	Panel(X, Y, Width, Px(72.0f) + RowHeight * ((bFaction ? 12 : 7) + (CountryInfected >= 1.0 ? 1 : 0) + (bCity ? 1 : 0)) + Px(10.0f), TEXT("COUNTRY DOSSIER"));
+	Panel(X, Y, Width, Px(72.0f) + RowHeight * ((bFaction ? 13 : 7) + (CountryInfected >= 1.0 ? 1 : 0) + (bCity ? 1 : 0)) + Px(10.0f), TEXT("COUNTRY DOSSIER"));
 	Text(Stats.Name.ToUpper(), X + Px(14.0f), Y + Px(34.0f), 19.0f, White, EFace::Bold);
 	float RowY = Y + Px(70.0f);
 	const float LabelX = X + Px(14.0f);
@@ -594,6 +594,7 @@ void AEarthfallHUD::DrawCountryDossier(const AEarthOrbitPawn* Pawn)
 	{
 		// The nation as a power: what it can throw, and at whom.
 		Row(TEXT("TECH TIER"), UEarthfallSandboxSubsystem::TechTierLabel(Faction.TechTier), Cyan);
+		Row(TEXT("ORDERS"), Faction.Orders, Faction.Orders == TEXT("NONE") ? Dim : Orange);
 		Row(TEXT("MILITARY"), FString::Printf(TEXT("%.0f / 100"), Faction.MilitaryStrength), White, Faction.MilitaryStrength / 100.0f);
 		Row(TEXT("WARHEADS"), FString::Printf(TEXT("%d"), Faction.NuclearStockpile), Faction.NuclearStockpile > 0 ? Orange : Dim);
 		Row(TEXT("AT WAR WITH"), Faction.AtWarWith.IsEmpty() ? FString(TEXT("NOBODY")) : FString::Join(Faction.AtWarWith, TEXT(" ")),

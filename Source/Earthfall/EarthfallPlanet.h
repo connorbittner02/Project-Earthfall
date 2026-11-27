@@ -218,7 +218,7 @@ private:
 	float SurfaceFade = 1.0f;
 	float WinterLevel = 0.0f;
 	float CityGrowthTimer = 10.0f;
-	TArray<uint8> CityGrowthBytes;
+	TArray<FColor> CityGrowthBytes;
 	void UpdateCityGrowthTexture();
 	TArray<FVector> SecondaryFireSites;
 	float WinterOverride = -1.0f;

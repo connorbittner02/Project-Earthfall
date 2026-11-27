@@ -57,9 +57,9 @@ public:
 	void SelectWeapon(int32 Index);
 	/** The command dock: which tab is open and which tool is armed on each. */
 	int32 GetToolTab() const { return ToolTab; }
-	int32 GetToolSlot(int32 Tab) const { return ToolSlot[FMath::Clamp(Tab, 0, 2)]; }
+	int32 GetToolSlot(int32 Tab) const { return ToolSlot[FMath::Clamp(Tab, 0, EarthfallTools::TabCount - 1)]; }
 	void SelectTab(int32 Tab);
-	void CycleTab() { SelectTab((ToolTab + 1) % 3); }
+	void CycleTab() { SelectTab((ToolTab + 1) % EarthfallTools::TabCount); }
 	void SelectTool(int32 Tab, int32 Slot);
 	/** Launch a specific weapon at a planet-local direction, whatever is selected, ignoring cooldown. */
 	void LaunchWeaponAt(const FVector& PlanetLocalDirection, int32 Weapon, float Yield, float RadiusMultiplier, float Fallout);
@@ -148,7 +148,7 @@ private:
 	int32 WeaponIndex = 0;
 	int32 ToolTab = 0;
 	int32 MunitionIndex = 0;
-	int32 ToolSlot[3] = {0, 0, 0};
+	int32 ToolSlot[EarthfallTools::TabCount] = {0, 0, 0, 0};
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<UEarthfallAudioComponent> Audio;
 	/** The last headline heard, so each war or nuclear dispatch sounds its alert once. */

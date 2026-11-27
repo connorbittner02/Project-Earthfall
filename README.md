@@ -51,6 +51,12 @@ City locations, population distribution and all casualty, climate, grid and fall
 - Fourteen AI powers with alliances, wars, missile exchanges, interceptors and a Kessler debris ring.
 - Plague, rage, cure and insurgency zones; air and sea traffic; nuclear winter; synthesised audio.
 
+**Munitions, cities and orders** (see `docs/civ-munitions-growth.md`)
+
+- Five shells (Standard, MIRV Cluster, Incendiary, EMP, Bunker-Buster), chosen with F.
+- Cities grow in peace and their lights sprawl; hubs climb from CITY to MEGACITY to ARCOLOGY.
+- A CIV tab: resource and tech drops through four tech tiers, ground armies, and direct orders to a commanded nation.
+
 ## Controls
 
 | Input | Action |
@@ -59,6 +65,7 @@ City locations, population distribution and all casualty, climate, grid and fall
 | Mouse wheel | Zoom, eased, down to 1.035 planet radii; the camera tilts to the horizon in low orbit |
 | LMB | Launch the selected weapon at the cursor |
 | Tab | Cycle the command dock's tabs |
+| F | Cycle the loaded shell (or click the SHELL strip) |
 | 1-6 | Select a tool on the open tab (or click a row) |
 | Q / E | Yield multiplier down / up |
 | A / D | Blast radius multiplier down / up |

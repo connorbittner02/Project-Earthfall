@@ -1182,7 +1182,7 @@ void AEarthfallPlanet::UpdateCityGrowthTexture()
 	if (CityGrowthBytes.Num() != Width * Height) return;
 	if (!CityGrowthTexture)
 	{
-		CityGrowthTexture = UTexture2D::CreateTransient(Width, Height, PF_G8);
+		CityGrowthTexture = UTexture2D::CreateTransient(Width, Height, PF_B8G8R8A8);
 		if (!CityGrowthTexture) return;
 		// Data, not colour; wraps east-west like every other equirectangular map.
 		CityGrowthTexture->SRGB = false;
@@ -1194,7 +1194,7 @@ void AEarthfallPlanet::UpdateCityGrowthTexture()
 	FTexture2DMipMap& Mip = CityGrowthTexture->GetPlatformData()->Mips[0];
 	if (void* Pixels = Mip.BulkData.Lock(LOCK_READ_WRITE))
 	{
-		FMemory::Memcpy(Pixels, CityGrowthBytes.GetData(), CityGrowthBytes.Num());
+		FMemory::Memcpy(Pixels, CityGrowthBytes.GetData(), CityGrowthBytes.Num() * sizeof(FColor));
 	}
 	Mip.BulkData.Unlock();
 	CityGrowthTexture->UpdateResource();

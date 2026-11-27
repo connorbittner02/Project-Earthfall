@@ -435,7 +435,67 @@ void AEarthfallCaptureDirector::BuildScript()
 			UE_LOG(LogEarthfallCapture, Display, TEXT("EARTHFALL_CAPTURE city %s tier=%s growth=%.2fx"), *Name, UEarthfallPopulationSubsystem::CityTierLabel(Tier), Growth);
 		}
 	});
-	At(244.2f, [this]() { Finish(); });
+	// --- Civilization, from a clean world. Brazil gets resources and three tech
+	// uplifts (Conventional to Fusion Shielded), then is commanded to attack Argentina.
+	At(244.4f, [=, this]()
+	{
+		AEarthOrbitPawn* P = Pawn();
+		UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>();
+		if (!P || !Sandbox) return;
+		P->ResetSimulation();
+		P->SetHudMode(EEarthfallHudMode::Full);
+		View(-50.0f, -22.0f, 215.0f);
+		const FVector Brasilia = EarthfallSolar::DirectionFromLatLon(-15.8, -47.9);
+		Sandbox->UseTool(EarthfallTools::TabCiv, EarthfallTools::DropResources, Brasilia, P);
+		for (int32 Tier = 0; Tier < 3; ++Tier) Sandbox->UseTool(EarthfallTools::TabCiv, EarthfallTools::TechUplift, Brasilia, P);
+		P->SelectTool(EarthfallTools::TabCiv, EarthfallTools::Command);
+		Sandbox->UseTool(EarthfallTools::TabCiv, EarthfallTools::Command, Brasilia, P);
+	});
+	At(247.4f, [this]() { Shot(TEXT("61-tech-tier4-shield")); });
+	At(247.5f, [this]()
+	{
+		AEarthOrbitPawn* P = Pawn();
+		UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>();
+		if (!P || !Sandbox) return;
+		P->SelectTool(EarthfallTools::TabCiv, EarthfallTools::OrderAttack);
+		Sandbox->UseTool(EarthfallTools::TabCiv, EarthfallTools::OrderAttack, EarthfallSolar::DirectionFromLatLon(-34.6, -58.4), P);
+	});
+	At(250.6f, [this]() { Shot(TEXT("62-order-attack-army-and-fleet")); });
+	At(254.5f, [this]() { Shot(TEXT("63-order-attack-munitions")); });
+	At(254.6f, [this]()
+	{
+		const UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>();
+		if (Sandbox) UE_LOG(LogEarthfallCapture, Display, TEXT("EARTHFALL_CAPTURE during attack: units=%d armies=%d fleets=%d wars=%d"),
+			Sandbox->GetUnitCount(), Sandbox->GetArmyCount(), Sandbox->GetFleetCount(), Sandbox->GetActiveWarCount());
+	});
+	// Mobilize, then Evacuate: the same nation fortifies, then stands down and rebuilds.
+	At(254.8f, [this]() { if (UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>()) { if (AEarthOrbitPawn* P = Pawn()) P->SelectTool(EarthfallTools::TabCiv, EarthfallTools::OrderMobilize); Sandbox->UseTool(EarthfallTools::TabCiv, EarthfallTools::OrderMobilize, EarthfallSolar::DirectionFromLatLon(-15.8, -47.9), Pawn()); } });
+	At(256.6f, [this]() { Shot(TEXT("64-order-mobilize")); });
+	At(256.8f, [this]() { if (UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>()) { if (AEarthOrbitPawn* P = Pawn()) P->SelectTool(EarthfallTools::TabCiv, EarthfallTools::OrderEvacuate); Sandbox->UseTool(EarthfallTools::TabCiv, EarthfallTools::OrderEvacuate, EarthfallSolar::DirectionFromLatLon(-15.8, -47.9), Pawn()); } });
+	At(258.6f, [this]() { Shot(TEXT("65-order-evacuate")); });
+	// R: everything back to the start. The dossier should read Conventional, no orders, baseline city.
+	At(258.8f, [this]()
+	{
+		AEarthOrbitPawn* P = Pawn();
+		if (!P) return;
+		P->ResetSimulation();
+		P->InspectDirection(EarthfallSolar::DirectionFromLatLon(-15.8, -47.9));
+	});
+	At(261.4f, [this]()
+	{
+		Shot(TEXT("66-clean-reset-civ"));
+		const UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>();
+		const UEarthfallPopulationSubsystem* People = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>();
+		const AEarthOrbitPawn* P = Pawn();
+		FEarthfallFactionInfo Info;
+		if (Sandbox && People && P && Sandbox->GetFactionInfo(People->GetCountryAtDirection(EarthfallSolar::DirectionFromLatLon(-15.8, -47.9)), Info))
+		{
+			UE_LOG(LogEarthfallCapture, Display, TEXT("EARTHFALL_CAPTURE after reset: brazil tier=%s orders=%s units=%d wars=%d shell=%s population=%.3fB"),
+				UEarthfallSandboxSubsystem::TechTierLabel(Info.TechTier), *Info.Orders, Sandbox->GetUnitCount(), Sandbox->GetActiveWarCount(),
+				EarthfallMunitions::Name(P->GetMunition()), People->GetTelemetry().LivingPopulation / 1.0e9);
+		}
+	});
+	At(262.0f, [this]() { Finish(); });
 
 	Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
 }
