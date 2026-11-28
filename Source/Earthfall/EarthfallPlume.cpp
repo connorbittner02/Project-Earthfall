@@ -1,4 +1,6 @@
 #include "EarthfallPlume.h"
+#include "Camera/PlayerCameraManager.h"
+#include "GameFramework/PlayerController.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -193,7 +195,7 @@ void AEarthfallPlume::UpdateShape()
 	WindLocal.Z = 0.0;
 	WindLocal = WindLocal.GetSafeNormal();
 	const float TopHeight = FMath::Max((Params.bOcean ? SteamTop : AshTop) * Radius, 0.05f);
-	const float Drift = Girth * (0.5f + 2.6f * Params.Loft) * FMath::SmoothStep(1.5f, RiseSeconds * 3.5f, Age);
+	const float Drift = Girth * (0.3f + 1.1f * Params.Loft) * FMath::SmoothStep(1.5f, RiseSeconds * 3.5f, Age);
 	auto Shear = [&WindLocal, Drift, TopHeight](float Altitude)
 	{
 		return WindLocal * (Drift * FMath::Square(FMath::Clamp(Altitude / TopHeight, 0.0f, 1.3f)));
@@ -247,8 +249,20 @@ void AEarthfallPlume::UpdateShape()
 		AnvilVeil->SetRelativeRotation(AlongWind);
 		AnvilVeil->SetRelativeLocation(FVector(0.0f, 0.0f, Height + CapThickness * 0.62f) + CapShear * 2.3f + WindLocal * AnvilRadius * 0.9f * Spread);
 		AnvilVeil->SetRelativeScale3D(FVector(AnvilRadius * Stretch * 1.45f, AnvilRadius * 1.15f, CapThickness * 0.22f) * AnvilGrow / PlumeShapeHalfExtent);
-		if (AnvilMID) AnvilMID->SetVectorParameterValue(TEXT("Tint"), Tint(FLinearColor(Body.R * 1.25f, Body.G * 1.25f, Body.B * 1.3f), 0.92f * Fade));
-		if (AnvilVeilMID) AnvilVeilMID->SetVectorParameterValue(TEXT("Tint"), Tint(FLinearColor(Body.R * 1.7f, Body.G * 1.7f, Body.B * 1.8f), 0.55f * Fade));
+		// A camera on the deck underneath would see nothing but the anvil's underside,
+		// so it thins out for a viewer who is below it and under its footprint.
+		float Overhead = 1.0f;
+		if (const APlayerController* PC = GetWorld()->GetFirstPlayerController())
+		{
+			if (PC->PlayerCameraManager)
+			{
+				const FVector Eye = GetActorTransform().InverseTransformPosition(PC->PlayerCameraManager->GetCameraLocation());
+				const float Under = 1.0f - FMath::SmoothStep(AnvilRadius * Stretch * 1.2f, AnvilRadius * Stretch * 2.4f, static_cast<float>(FVector2D(Eye.X, Eye.Y).Size()));
+				Overhead = 1.0f - 0.88f * Under * (1.0f - FMath::SmoothStep(Height * 0.5f, Height, static_cast<float>(Eye.Z)));
+			}
+		}
+		if (AnvilMID) AnvilMID->SetVectorParameterValue(TEXT("Tint"), Tint(FLinearColor(Body.R * 1.25f, Body.G * 1.25f, Body.B * 1.3f), 0.92f * Fade * Overhead));
+		if (AnvilVeilMID) AnvilVeilMID->SetVectorParameterValue(TEXT("Tint"), Tint(FLinearColor(Body.R * 1.7f, Body.G * 1.7f, Body.B * 1.8f), 0.55f * Fade * Overhead));
 	}
 	Cap->SetRelativeScale3D(FVector(CapRadius, CapRadius, CapThickness) / PlumeShapeHalfExtent);
 	if (CapMID) CapMID->SetVectorParameterValue(TEXT("Tint"), Tint(Body, 1.0f * Fade));

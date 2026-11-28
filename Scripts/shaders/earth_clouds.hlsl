@@ -177,7 +177,9 @@ float4 Main(float3 LocalPos, float3 ViewLocal, float CamDist, float2 UV, float3 
     alpha = max(alpha, ringGlow * 0.16 * (1.0 - cleared * 0.5));
 
     // The shell is a faceted mesh: fade it out over the last few degrees before
-    // its own horizon, where the facets would otherwise show as slivers.
-    alpha *= smoothstep(0.03, 0.18, abs(vUp));
+    // its own horizon, where the facets would otherwise show as slivers. From
+    // underneath it is not drawn at all, so a camera at 30,000 ft keeps its view
+    // of the ground under a soot veil.
+    alpha *= smoothstep(0.03, 0.18, vUp);
     return float4(col, saturate(alpha * Look.x));
 }

@@ -136,7 +136,8 @@ void AEarthfallPlanet::Tick(float DeltaSeconds)
 
 	UpdateWinter(DeltaSeconds);
 	CityGrowthTimer += DeltaSeconds;
-	if (CityGrowthTimer >= 1.0f)
+	// Four times a second: the grid cascade moves a cell every quarter second.
+	if (CityGrowthTimer >= 0.25f)
 	{
 		CityGrowthTimer = 0.0f;
 		UpdateCityGrowthTexture();

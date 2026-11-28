@@ -69,7 +69,95 @@ void UEarthfallPopulationSubsystem::Tick(float DeltaTime)
 	AdvanceDispatches(DeltaTime);
 	AdvancePlumes(DeltaTime);
 	AdvanceTsunamis(DeltaTime);
+	AdvanceGrid(DeltaTime);
 	RecoverEnvironment(DeltaTime);
+}
+
+float UEarthfallPopulationSubsystem::CorridorWeight(int32 CellA, int32 CellB)
+{
+	// Transmission lines do not tie every neighbour equally. About two links in
+	// five are trunk corridors; the rest are weak local ties. The pattern is fixed
+	// by the two cells, so the same corridors carry every cascade. A fault
+	// that starts at full strength dies out four or five cells (about 350 km)
+	// down a trunk line.
+	const uint32 Low = static_cast<uint32>(FMath::Min(CellA, CellB));
+	const uint32 High = static_cast<uint32>(FMath::Max(CellA, CellB));
+	const uint32 Mixed = HashCombineFast(GetTypeHash(Low * 2654435761u), GetTypeHash(High * 40503u + 17u));
+	return (Mixed % 100u) < 38u ? 0.95f : 0.18f;
+}
+
+void UEarthfallPopulationSubsystem::AdvanceGrid(float DeltaTime)
+{
+	if (Cells.IsEmpty()) return;
+	if (GridTripped.Num() != Cells.Num())
+	{
+		GridTripped.Init(0, Cells.Num());
+		CascadeEnergy.Init(0.0f, Cells.Num());
+	}
+	GridNewsTimer += DeltaTime;
+	GridSweepTimer += DeltaTime;
+	// One hop every quarter second: the failure is a front that travels, not a disc that appears.
+	if (GridSweepTimer < 0.25f) return;
+	GridSweepTimer = 0.0f;
+
+	constexpr float TripBelow = 0.35f;
+	constexpr float RestoredAbove = 0.55f;
+	// A fault loses three tenths of its energy per hop, and most of the rest on a weak tie.
+	constexpr float HopKeep = 0.70f;
+	constexpr float MinimumFault = 0.20f;
+
+	TArray<int32, TInlineAllocator<256>> NewlyTripped;
+	for (int32 Index = 0; Index < Cells.Num(); ++Index)
+	{
+		const FEarthfallPopulationCell& Cell = Cells[Index];
+		if (Cell.BaselinePopulation <= 0.0) continue;
+		if (!GridTripped[Index] && Cell.PowerGridHealth < TripBelow)
+		{
+			GridTripped[Index] = 1;
+			NewlyTripped.Add(Index);
+		}
+		else if (GridTripped[Index] && Cell.PowerGridHealth > RestoredAbove)
+		{
+			GridTripped[Index] = 0;
+			CascadeEnergy[Index] = 0.0f;
+		}
+	}
+
+	for (const int32 Index : NewlyTripped)
+	{
+		// A substation knocked out directly sheds its whole load onto its neighbours;
+		// one tripped by a cascade passes on only what reached it.
+		const float Energy = CascadeEnergy[Index] > 0.0f ? CascadeEnergy[Index] : 1.0f;
+		const int32 X = Index % GridWidth;
+		const int32 Y = Index / GridWidth;
+		const int32 Neighbours[4] = {
+			Y * GridWidth + (X + 1) % GridWidth,
+			Y * GridWidth + (X + GridWidth - 1) % GridWidth,
+			Y + 1 < GridHeight ? Index + GridWidth : -1,
+			Y > 0 ? Index - GridWidth : -1};
+		for (const int32 Next : Neighbours)
+		{
+			if (Next < 0 || GridTripped[Next]) continue;
+			FEarthfallPopulationCell& Cell = Cells[Next];
+			if (Cell.BaselinePopulation <= 0.0) continue;
+			const float Fault = Energy * HopKeep * CorridorWeight(Index, Next);
+			if (Fault < MinimumFault) continue;
+			// Overloaded lines sag the neighbour's supply. Enough of it and that
+			// substation trips on the next sweep and passes the fault on; less, and
+			// the cell browns out and flickers until crews bring it back.
+			Cell.PowerGridHealth = FMath::Max(0.0f, Cell.PowerGridHealth - Fault * 0.85f);
+			CascadeEnergy[Next] = FMath::Max(CascadeEnergy[Next], Fault);
+			if (Cell.PowerGridHealth < TripBelow) ++CascadeTripsSinceNews;
+		}
+	}
+
+	if (CascadeTripsSinceNews >= 12 && GridNewsTimer > 6.0f)
+	{
+		EnqueueNews(FString::Printf(TEXT("[GRID CASCADE] %d SUBSTATIONS TRIPPED  //  blackout spreading along transmission corridors  //  brownouts on the margins"), CascadeTripsSinceNews), 5);
+		UE_LOG(LogTemp, Display, TEXT("EARTHFALL_GRID cascade tripped %d substations beyond the directly damaged cells"), CascadeTripsSinceNews);
+		CascadeTripsSinceNews = 0;
+		GridNewsTimer = 0.0f;
+	}
 }
 
 float UEarthfallPopulationSubsystem::DispatchLifetimeForPriority(int32 Priority)
@@ -580,7 +668,10 @@ void UEarthfallPopulationSubsystem::ApplyStrike(const FVector& LocalDirection, f
 			const double Displacement = NotYetDisplaced * DisplaceFraction;
 			Cell.DisplacedPopulation += Displacement;
 			NewDisplaced += Displacement;
-			Cell.PowerGridHealth = FMath::Clamp(Cell.PowerGridHealth - FalloutProfile * (SafeWeapon == 3 ? 0.62f : 1.0f), 0.0f, 1.0f);
+			// The strike itself only destroys the grid near its centre. The wider
+			// blackout is no longer a disc drawn by this profile: it is whatever the
+			// cascade in AdvanceGrid carries out along the corridors from here.
+			Cell.PowerGridHealth = FMath::Clamp(Cell.PowerGridHealth - FMath::Pow(FalloutProfile, 2.6f) * (SafeWeapon == 3 ? 0.62f : 1.0f), 0.0f, 1.0f);
 			Cell.HazardHeat = SafeWeapon == 4
 				? FMath::Min(Cell.HazardHeat, -0.8f * CoreProfile)
 				: FMath::Max(Cell.HazardHeat, CoreProfile * FMath::Min(EnergyScale, 2.0f));
@@ -678,6 +769,9 @@ void UEarthfallPopulationSubsystem::ResetSimulation()
 	NewsQueue.Reset();
 	Plumes.Reset();
 	Tsunamis.Reset();
+	GridTripped.Reset();
+	CascadeEnergy.Reset();
+	CascadeTripsSinceNews = 0;
 	NewsSequence = 0;
 	DispatchCursor = 0;
 	DispatchRotationTimer = 0.0f;
@@ -1007,8 +1101,17 @@ void UEarthfallPopulationSubsystem::GrowCities(float DeltaTime)
 		FEarthfallPopulationCell& Cell = Cells[Index];
 		if (Cell.LivingPopulation <= 0.0 || Cell.BaselinePopulation <= 0.0) continue;
 		const FCountryState& State = CountryStates[CellCountry[Index]];
-		// Crews repair the grid wherever there are still people to do it.
-		Cell.PowerGridHealth = FMath::Min(1.0f, Cell.PowerGridHealth + 0.006f * DeltaTime);
+		// Crews repair the grid wherever there are still people to do it, and a
+		// cell is re-energised from its neighbours: restoration works inward from
+		// the live edge of a blackout, back along the corridors it spread by.
+		if (Cell.PowerGridHealth < 1.0f)
+		{
+			const int32 X = Index % GridWidth;
+			const float Live = FMath::Max(
+				FMath::Max(Cells[Index - X + (X + 1) % GridWidth].PowerGridHealth, Cells[Index - X + (X + GridWidth - 1) % GridWidth].PowerGridHealth),
+				FMath::Max(Index + GridWidth < Cells.Num() ? Cells[Index + GridWidth].PowerGridHealth : 0.0f, Index >= GridWidth ? Cells[Index - GridWidth].PowerGridHealth : 0.0f));
+			Cell.PowerGridHealth = FMath::Min(1.0f, Cell.PowerGridHealth + (0.0035f + 0.016f * Live * Live) * DeltaTime);
+		}
 		if (State.Stability >= EEarthfallStability::MartialLaw) continue;
 		// The displaced come home once things are calm.
 		Cell.DisplacedPopulation *= FMath::Max(0.0, 1.0 - 0.01 * DeltaTime);

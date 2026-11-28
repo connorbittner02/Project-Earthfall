@@ -293,6 +293,17 @@ private:
 	void RecoverEnvironment(float DeltaTime);
 	void RefreshPopulationTotals();
 	void GrowCities(float DeltaTime);
+	/** Trip substations whose cells have failed and carry the fault along the corridors. */
+	void AdvanceGrid(float DeltaTime);
+	/** 0..1: how strongly the transmission corridor between two neighbouring cells ties them. */
+	static float CorridorWeight(int32 CellA, int32 CellB);
+	/** Per cell: 1 once its substation has tripped, until it is restored. */
+	TArray<uint8> GridTripped;
+	/** Per cell: the fault energy that reached it; 0 for a cell the damage hit directly. */
+	TArray<float> CascadeEnergy;
+	float GridSweepTimer = 0.0f;
+	float GridNewsTimer = 0.0f;
+	int32 CascadeTripsSinceNews = 0;
 	void MeasureCities(bool bReset);
 	float GrowthTimer = 0.0f;
 	int32 CityCursor = 0;

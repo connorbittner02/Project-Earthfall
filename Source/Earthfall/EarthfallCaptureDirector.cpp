@@ -165,8 +165,50 @@ void AEarthfallCaptureDirector::BuildScript()
 		At(Start + 94.2f, [=, this]() { if (AEarthOrbitPawn* P = Pawn()) { Weapon(0, EarthfallMultipliers::DefaultIndex); P->ResetSimulation(); } });
 		return Start + 94.6f;
 	};
+	// Night lights that hold their detail when a city triples, and a blackout that
+	// travels along corridors instead of opening as a disc.
+	auto GridShots = [=, this](float Start)
+	{
+		At(Start + 0.0f, [=, this]() { if (AEarthOrbitPawn* P = Pawn()) { P->SetHudMode(EEarthfallHudMode::Hidden); P->SetAimEnabled(false); } View(126.0f, 34.0f, 150.0f); });
+		At(Start + 3.0f, [this]() { Shot(TEXT("81-night-lights-dual-temperature")); });
+		At(Start + 3.2f, [this]()
+		{
+			if (UEarthfallPopulationSubsystem* People = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>())
+				People->BoostCountryGrowth(People->GetCountryAtDirection(EarthfallSolar::DirectionFromLatLon(35.7, 139.7)), 28.0f, 16.0f);
+		});
+		At(Start + 22.0f, [this]() { Shot(TEXT("82-arcology-lights-soft-clamped")); });
+		// A kinetic rod at the smallest blast radius into the North China Plain. Wider view.
+		At(Start + 22.2f, [=, this]() { View(112.0f, 33.0f, 215.0f); Weapon(0, EarthfallMultipliers::DefaultIndex); if (AEarthOrbitPawn* P = Pawn()) P->SetMultiplierIndex(EEarthfallMultiplier::BlastRadius, 0); });
+		At(Start + 25.0f, [this]() { Shot(TEXT("83-grid-before-strike")); });
+		At(Start + 25.2f, [=]() { Fire(36.5, 116.5); });
+		At(Start + 28.6f, [this]() { Shot(TEXT("84-grid-cascade-1s")); });
+		At(Start + 30.6f, [this]() { Shot(TEXT("85-grid-cascade-3s")); });
+		At(Start + 34.0f, [this]() { Shot(TEXT("86-grid-cascade-corridors")); });
+		At(Start + 60.0f, [this]() { Shot(TEXT("87-grid-restoring")); });
+		At(Start + 60.2f, [=, this]() { if (AEarthOrbitPawn* P = Pawn()) { P->SetMultiplierIndex(EEarthfallMultiplier::BlastRadius, EarthfallMultipliers::DefaultIndex); P->ResetSimulation(); } });
+		return Start + 60.6f;
+	};
 	FString CaptureSet;
 	FParse::Value(FCommandLine::Get(), TEXT("EarthfallCaptureSet="), CaptureSet);
+	if (CaptureSet == TEXT("crater"))
+	{
+		// The mantle crater from 30,000 ft, on its own.
+		At(0.0f, [=, this]() { if (AEarthOrbitPawn* P = Pawn()) { P->SetHudMode(EEarthfallHudMode::Hidden); P->SetAimEnabled(false); } View(-56.0f, -9.0f, 150.0f); Weapon(2, EarthfallMultipliers::DefaultIndex); });
+		At(1.0f, [=]() { Fire(-15.0, -48.0); });
+		At(34.0f, [=]() { View(-48.0f, -18.0f, 103.5f); });
+		At(37.0f, [=]() { View(-48.0f, -18.0f, 100.6f); });
+		At(46.0f, [this]() { Shot(TEXT("28-terrain-crater")); });
+		At(46.5f, [this]() { Finish(); });
+		Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
+		return;
+	}
+	if (CaptureSet == TEXT("grid"))
+	{
+		const float End = GridShots(0.0f);
+		At(End, [this]() { Finish(); });
+		Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
+		return;
+	}
 	if (CaptureSet == TEXT("fx"))
 	{
 		const float End = FxShots(0.0f);
@@ -627,7 +669,8 @@ void AEarthfallCaptureDirector::BuildScript()
 	TimeOffset = 0.0f;
 	const float CityEnd = CityShots(50.2f + 11.2f + 266.8f);
 	const float FxEnd = FxShots(CityEnd);
-	At(FxEnd, [this]() { Finish(); });
+	const float GridEnd = GridShots(FxEnd);
+	At(GridEnd, [this]() { Finish(); });
 
 	Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
 }

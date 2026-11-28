@@ -47,7 +47,9 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
     ice = max(ice, frost);
 
     // Impact mask: R carries a 0.25 EMP plateau under a 1.0 scorch core.
-    float blackout = saturate(Mask.r * 4.0);
+    // Only ground that is actually scorched is dark for good. Everything wider is
+    // the power grid's doing, and comes from the grid map further down.
+    float blackout = saturate((Mask.r - 0.22) * 5.0);
     // Water does not char: the scorch core is a land effect only.
     float scorch = saturate((Mask.r - 0.25) / 0.60) * (1.0 - water);
     float heat = saturate(Mask.g);
@@ -228,6 +230,7 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
     float tech = saturate(Growth.g) * 3.0;
     float3 cityTex = NightTex;
     float cityLevel = 1.0;
+    float gridLit = 1.0;
     [branch] if (night > 0.001)
     {
         // The growth map is one pixel per 78 km population cell. Read raw it shows
@@ -243,6 +246,16 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
         raw += Texture2DSampleLevel(GrowthObj, GrowthObjSampler, growthUV + float2(-0.85, -0.55) * cell, 0).r;
         raw += Texture2DSampleLevel(GrowthObj, GrowthObjSampler, growthUV + float2(0.55, -0.85) * cell, 0).r;
         raw /= 6.0;
+        // The same map's blue is each cell's grid health. Read through the same bend,
+        // a failing region has ragged edges that follow the corridors the cascade took.
+        float gridPower = raw < 0.002 ? 1.0
+            : Texture2DSampleLevel(GrowthObj, GrowthObjSampler, growthUV, 0).b * 0.5
+            + (Texture2DSampleLevel(GrowthObj, GrowthObjSampler, growthUV + float2(0.85, 0.55) * cell, 0).b
+             + Texture2DSampleLevel(GrowthObj, GrowthObjSampler, growthUV - float2(0.85, 0.55) * cell, 0).b) * 0.25;
+        // A brownout flickers district by district before it settles dark or recovers.
+        float flickerCell = Hash13(float3(floor(growthUV * float2(512.0, 256.0) * 6.0), floor(Time * 9.0)));
+        float flicker = lerp(step(flickerCell, saturate(gridPower * 1.2)), 1.0, smoothstep(0.72, 0.90, gridPower));
+        gridLit = smoothstep(0.04, 0.85, gridPower) * flicker;
         float growth = raw < 0.002 ? 1.0 : saturate((raw * 255.0 - 1.0) / 254.0) * 3.0;
 
         // Sprawl follows what is already lit: roads, coasts and suburbs on the night
@@ -276,9 +289,21 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
         }
         cityLevel = growth < 1.0 ? pow(growth, 0.8) : 1.0 + 1.1 * (growth - 1.0);
     }
+    // Two colour temperatures. Dense cores are still sodium, about 2700 K; the dimmer
+    // tissue between them, arterial roads and new suburbs, is white LED nearer 4500 K.
+    float coreness = smoothstep(0.22, 0.70, dot(cityTex, float3(0.333, 0.333, 0.333)));
+    cityColour *= lerp(BlackbodyColour(4500.0), BlackbodyColour(2700.0), coreness) / float3(1.0, 0.78, 0.45);
     cityColour = lerp(cityColour, float3(0.62, 0.90, 1.00), saturate(tech / 3.0) * 0.85);
     cityLevel *= 1.0 + 0.22 * tech;
-    float3 emissive = cityTex * cityLevel * cityDetail * cityColour * 1.30 * night * (1.0 - blackout) * Tuning.y * (1.0 - 0.7 * soot);
+    // Growth is soft-clamped before bloom, x / (1 + 0.45 x), scaled so a city at
+    // baseline is unchanged: an Arcology at three times its size is about twice as
+    // bright, with its street pattern intact, instead of a white patch.
+    cityLevel = cityLevel * 1.45 / (1.0 + cityLevel * 0.45);
+    float3 cityLight = cityTex * cityLevel * cityDetail * cityColour * 1.30 * Tuning.y;
+    // And the brightest cores are eased off once more, by their peak channel, so the
+    // street pattern inside a grown city survives the bloom.
+    cityLight /= 1.0 + max(cityLight.r, max(cityLight.g, cityLight.b)) * 0.16;
+    float3 emissive = cityLight * night * (1.0 - blackout) * gridLit * (1.0 - 0.7 * soot);
 
     // --- Magma: ridged-noise veins that narrow and dim as the crater cools.
     // Warp the lookup so the veins meander instead of following the noise lattice.

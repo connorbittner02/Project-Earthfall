@@ -146,6 +146,9 @@ float4 Main(float3 RelPos, float3 CamPos,
         float gridPower = (Growth.r < 0.002 ? 1.0 : saturate(Growth.b)) * (1.0 - max(saturate(Mask.r * 4.0), saturate(Wave.b * 9.0)));
         float cityGlow = saturate(dot(Texture2DSampleLevel(NightTex, NightTexSampler, trueUV, 0).rgb, float3(0.45, 0.45, 0.45)) * 2.6);
         cityGlow *= 0.70 + 0.30 * VNoise(n * 5200.0);
+        // Only where streets can be resolved. From low orbit, where a pixel is a city
+        // block or more, the cover stays down and the lights are points again.
+        cityGlow *= 1.0 - smoothstep(18.0, 55.0, length(RelPos) * 33.8);
         x = night * 0.92 * (1.0 - 0.94 * cityGlow * gridPower); col = lerp(col, float3(0.004, 0.005, 0.008), x); a = a + x - a * x;
         x = saturate(Fire.r * 2.0) * 0.85;       col = lerp(col, rockCol * 0.30, x); a = a + x - a * x;
         x = pow(deposit, 0.7) * 0.35;            col = lerp(col, float3(0.25, 0.20, 0.16), x); a = a + x - a * x;
@@ -248,10 +251,10 @@ float4 Main(float3 RelPos, float3 CamPos,
     // From orbit the fighting is glowing clusters. On the ground each cluster is
     // burning streets: fine fire lines and embers inside it, not a lit sheet.
     float rageField = Fbm(n * 11000.0 + float3(0.0, Time * 0.02, 0.0), 4);
-    float rageLine = smoothstep(0.020, 0.0, abs(rageField - 0.5));
+    float rageLine = smoothstep(0.034, 0.0, abs(rageField - 0.5));
     float rageHalo = smoothstep(0.09, 0.0, abs(rageField - 0.5));
     float3 rageFar = (float3(1.00, 0.16, 0.01) * hotspot * 1.3 + float3(1.00, 0.36, 0.04) * fireCore * 1.5) * rageFlames;
-    float3 rageNear = (float3(1.00, 0.60, 0.16) * rageLine * 4.5 + float3(1.00, 0.20, 0.02) * (rageHalo * 0.45 + fireEmbers * 1.4))
+    float3 rageNear = (float3(1.00, 0.60, 0.16) * rageLine * 7.0 + float3(1.00, 0.20, 0.02) * (rageHalo * 1.1 + fireEmbers * 1.8))
                     * hotspot * (0.6 + 0.4 * rageFlames);
     emissive += lerp(rageFar, rageNear, Terrain.x);
 
@@ -273,6 +276,10 @@ float4 Main(float3 RelPos, float3 CamPos,
     float airGlow = 0.03 + 0.06 * VNoise(n * 2600.0);
     float3 lampCol = lerp(float3(1.0, 0.74, 0.40), float3(0.86, 0.93, 1.0), step(0.70, Hash13(lampCell + 3.0)));
     float gridUp = (Texture2DSampleLevel(GrowthTex, MaskTexSampler, trueUV, 0).r < 0.002 ? 1.0 : saturate(Texture2DSampleLevel(GrowthTex, MaskTexSampler, trueUV, 0).b)) * (1.0 - blackout);
-    emissive += lights * (float3(1.0, 0.74, 0.40) * airGlow + lampCol * lamp * lampFade * 7.0) * 2.5 * night * gridUp;
+    float streetsResolved = 1.0 - smoothstep(18.0, 55.0, lampPixel);
+    float farSparkle = Hash13(floor(n * 14000.0));
+    float3 farLights = float3(1.0, 0.78, 0.45) * 4.2 * (0.08 + 4.5 * pow(farSparkle, 5.0)) * 0.6;
+    float3 nearLights = (float3(1.0, 0.74, 0.40) * airGlow + lampCol * lamp * lampFade * 7.0) * 2.5;
+    emissive += lights * lerp(farLights, nearLights, streetsResolved) * night * gridUp;
     return float4(emissive * (1.0 - 0.8 * haze) * Terrain.x, 0.0);
 }
