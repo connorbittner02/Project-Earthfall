@@ -42,6 +42,8 @@ public:
 
 	/** Bind the live simulation render targets to another material, such as the terrain decal. */
 	void BindSimulationTextures(UMaterialInstanceDynamic* Material) const;
+	/** 512x256, one pixel per population cell: R growth, G tech tier, B grid health. */
+	UTexture2D* GetCityGrowthTexture() const { return CityGrowthTexture; }
 	/** 1 draws the surface, 0 dissolves it completely onto streamed terrain beneath. */
 	void SetSurfaceFade(float Fade);
 	/** Fades each cloud deck as the camera nears it, and sizes the aim sphere to the visible ground. */

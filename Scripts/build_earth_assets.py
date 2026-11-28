@@ -81,6 +81,20 @@ def import_texture(filename, asset_name, srgb, compression):
     return texture
 
 
+def import_pbr(name):
+    """One Poly Haven set packed by prepare_pbr_textures.py: (albedo, normal XY + roughness)."""
+    textures = []
+    for suffix, srgb, compression in (("A", True, unreal.TextureCompressionSettings.TC_DEFAULT),
+                                      ("NR", False, unreal.TextureCompressionSettings.TC_MASKS)):
+        asset_name = "T_PBR_%s_%s" % (name, suffix)
+        texture = import_texture(os.path.join("pbr", asset_name + ".png"), asset_name, srgb, compression)
+        if texture.get_editor_property("address_y") != unreal.TextureAddress.TA_WRAP:
+            texture.set_editor_property("address_y", unreal.TextureAddress.TA_WRAP)
+            EAL.save_loaded_asset(texture)
+        textures.append(texture)
+    return textures
+
+
 def create_material(directory, name):
     path = directory + "/" + name
     if EAL.does_asset_exist(path):
@@ -337,7 +351,7 @@ def build_clouds(black):
     finish_material(material, MATERIAL_DIR, "M_EarthClouds")
 
 
-def build_terrain_decal(black, night, masks):
+def build_terrain_decal(black, night, masks, rubble, rock):
     """Deferred decal that paints the destruction simulations onto streamed terrain."""
     material = create_material(MATERIAL_DIR, "M_TerrainDestruction")
     material.set_editor_property("material_domain", unreal.MaterialDomain.MD_DEFERRED_DECAL)
@@ -362,6 +376,11 @@ def build_terrain_decal(black, night, masks):
             ("NightTex", texture_object(material, "NightTexture", night, y + 660), ""),
             ("MasksTex", texture_object(material, "MasksTexture", masks, y + 680), ""),
             ("PlagueTex", texture_object(material, "PlagueRT", black, y + 690), ""),
+            ("RubbleA", texture_object(material, "RubbleAlbedo", rubble[0], y + 692), ""),
+            ("RubbleNR", texture_object(material, "RubbleNormalRough", rubble[1], y + 694), ""),
+            ("RockA", texture_object(material, "RockAlbedo", rock[0], y + 696), ""),
+            ("RockNR", texture_object(material, "RockNormalRough", rock[1], y + 698), ""),
+            ("GrowthTex", texture_object(material, "CityGrowthObject", black, y + 699), ""),
             ("Sun", vector_parameter(material, "SunDirection", (1.0, 0.0, 0.0, 0.0), y + 700), "RGB"),
             ("Time", node(material, unreal.MaterialExpressionTime, -900, y + 720), ""),
             ("Terrain", vector_parameter(material, "Terrain", (0.0, 0.0, 0.0, 0.0), y + 780), "RGBA"),
@@ -378,6 +397,101 @@ def build_terrain_decal(black, night, masks):
     output(mask(material, glow, "rgb"), "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
     output(mask(material, gloss, "r"), "", unreal.MaterialProperty.MP_ROUGHNESS)
     finish_material(material, MATERIAL_DIR, "M_TerrainDestruction")
+
+
+def world_position(material, y=0):
+    """Absolute world position before any material offset: safe to feed an offset."""
+    world = node(material, unreal.MaterialExpressionWorldPosition, -1300, y)
+    offsets = unreal.WorldPositionIncludedOffsets
+    names = [name for name in dir(offsets) if "EXCLUDE" in name.upper()]
+    if not names:
+        raise RuntimeError("No 'exclude offsets' world position mode in: " + ", ".join(dir(offsets)))
+    world.set_editor_property("world_position_shader_offset", getattr(offsets, names[0]))
+    return world
+
+
+def constant(material, value, y=0):
+    expression = node(material, unreal.MaterialExpressionConstant, -900, y)
+    expression.set_editor_property("r", float(value))
+    return expression
+
+
+def build_osm_buildings(black, concrete, asphalt):
+    """Lit material for the Cesium OSM Buildings tileset: facades, night windows, ruin."""
+    material = create_material(MATERIAL_DIR, "M_OSMBuildings")
+    world = world_position(material, -600)
+    camera_distance = node(material, unreal.MaterialExpressionDistance, -1100, -200)
+    connect(node(material, unreal.MaterialExpressionCameraPositionWS, -1300, -240), "", camera_distance, "A")
+    connect(world, "", camera_distance, "B")
+    impact = texture_object(material, "ImpactMaskRT", black, 300)
+    crater = texture_object(material, "CraterRT", black, 400)
+    fire = texture_object(material, "FireMaskRT", black, 500)
+    parameters = vector_parameter(material, "Params", (63877.0, 0.0, 0.0, 0.0), 900)
+    shared = [
+        ("WorldPos", world, ""),
+        ("NormalWS", node(material, unreal.MaterialExpressionVertexNormalWS, -1300, -400), ""),
+        ("CamDist", camera_distance, ""),
+        ("ConcreteA", texture_object(material, "ConcreteAlbedo", concrete[0], 0), ""),
+        ("ConcreteNR", texture_object(material, "ConcreteNormalRough", concrete[1], 100), ""),
+        ("AsphaltA", texture_object(material, "AsphaltAlbedo", asphalt[0], 200), ""),
+        ("MaskTex", impact, ""),
+        ("CraterTex", crater, ""),
+        ("FireTex", fire, ""),
+        ("WaveTex", texture_object(material, "TsunamiRT", black, 600), ""),
+        ("GrowthTex", texture_object(material, "CityGrowthObject", black, 700), ""),
+        ("Sun", vector_parameter(material, "SunDirection", (1.0, 0.0, 0.0, 0.0), 800), "RGB"),
+        ("Time", node(material, unreal.MaterialExpressionTime, -900, 850), ""),
+        ("Params", parameters, "RGBA"),
+    ]
+    float4 = unreal.CustomMaterialOutputType.CMOT_FLOAT4
+    colour = custom(material, "osm_buildings.hlsl", shared + [("Mode", constant(material, 0, 1000), "")], float4)
+    glow = custom(material, "osm_buildings.hlsl", shared + [("Mode", constant(material, 1, 1100), "")], float4)
+    collapse = custom(material, "osm_collapse.hlsl", [
+        ("WorldPos", world, ""),
+        ("MaskTex", impact, ""),
+        ("CraterTex", crater, ""),
+        ("FireTex", fire, ""),
+        ("Params", parameters, "RGBA"),
+    ], unreal.CustomMaterialOutputType.CMOT_FLOAT3)
+    output(mask(material, colour, "rgb"), "", unreal.MaterialProperty.MP_BASE_COLOR)
+    output(mask(material, colour, "a"), "", unreal.MaterialProperty.MP_ROUGHNESS)
+    output(mask(material, glow, "rgb"), "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    output(collapse, "", unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
+    finish_material(material, MATERIAL_DIR, "M_OSMBuildings")
+
+
+def build_arcology(black):
+    """Lit, instanced material for megatowers and construction cranes."""
+    material = create_material(MATERIAL_DIR, "M_Arcology")
+    material.set_editor_property("used_with_instanced_static_meshes", True)
+    world = world_position(material, -100)
+    impact = texture_object(material, "ImpactMaskRT", black, 20)
+    shared = [
+        ("UV", node(material, unreal.MaterialExpressionTextureCoordinate, -1300, -200), ""),
+        ("WorldPos", world, ""),
+        ("NormalWS", node(material, unreal.MaterialExpressionVertexNormalWS, -1300, 0), ""),
+        ("MaskTex", impact, ""),
+        ("GrowthTex", texture_object(material, "CityGrowthObject", black, 60), ""),
+        ("Sun", vector_parameter(material, "SunDirection", (1.0, 0.0, 0.0, 0.0), 100), "RGB"),
+        ("Time", node(material, unreal.MaterialExpressionTime, -900, 200), ""),
+        ("Look", vector_parameter(material, "Look", (0.0, 60.0, 1.0, 0.0), 300), "RGBA"),
+    ]
+    float4 = unreal.CustomMaterialOutputType.CMOT_FLOAT4
+    colour = custom(material, "arcology.hlsl", shared + [("Mode", constant(material, 0, 400), "")], float4)
+    glow = custom(material, "arcology.hlsl", shared + [("Mode", constant(material, 1, 500), "")], float4)
+    output(mask(material, colour, "rgb"), "", unreal.MaterialProperty.MP_BASE_COLOR)
+    output(mask(material, colour, "a"), "", unreal.MaterialProperty.MP_ROUGHNESS)
+    output(mask(material, glow, "rgb"), "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    # The same fall as the streamed buildings: a tower inside a blast goes down.
+    collapse = custom(material, "osm_collapse.hlsl", [
+        ("WorldPos", world, ""),
+        ("MaskTex", impact, ""),
+        ("CraterTex", texture_object(material, "CraterRT", black, 600), ""),
+        ("FireTex", texture_object(material, "FireMaskRT", black, 700), ""),
+        ("Params", vector_parameter(material, "Params", (63877.0, 0.0, 0.0, 0.0), 800), "RGBA"),
+    ], unreal.CustomMaterialOutputType.CMOT_FLOAT3)
+    output(collapse, "", unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
+    finish_material(material, MATERIAL_DIR, "M_Arcology")
 
 
 def build_atmosphere():
@@ -599,7 +713,13 @@ def main():
     build_surface(day, night, normal, masks, countries, black)
     build_clouds(black)
     build_atmosphere()
-    build_terrain_decal(black, night, masks)
+    rubble = import_pbr("Rubble")
+    rock = import_pbr("DarkRock")
+    concrete = import_pbr("Concrete")
+    asphalt = import_pbr("Asphalt")
+    build_terrain_decal(black, night, masks, rubble, rock)
+    build_osm_buildings(black, concrete, asphalt)
+    build_arcology(black)
     build_space(sky)
     build_sun("M_EarthSun", (0.0, 42.0, 0.0, 0.0), additive=False)
     build_sun("M_SunCorona", (1.0, 1.0, 0.0, 0.0), additive=True)

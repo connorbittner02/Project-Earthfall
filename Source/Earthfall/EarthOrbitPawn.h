@@ -83,6 +83,8 @@ public:
 	void SetOrbitView(float LongitudeDegrees, float LatitudeDegrees, float InDistance);
 	/** Streamed terrain lowers the ground reference and the orbit floor; zeros restore the planet defaults. */
 	void SetTerrainFloor(float InTerrainRadius, float InMinDistance) { TerrainRadius = InTerrainRadius; MinOrbitDistance = InMinDistance; }
+	/** Fix the low-orbit camera pitch in degrees up from straight down; negative restores the automatic tilt. */
+	void SetTiltOverride(float Degrees) { TiltOverride = Degrees; }
 	/** Launch the selected weapon at a planet-local unit direction, ignoring cooldown. */
 	bool FireAtDirection(const FVector& PlanetLocalDirection);
 
@@ -135,6 +137,7 @@ private:
 	/** Set by the terrain streamer: the ground radius altitude is measured from, and the orbit floor. Zero means the planet defaults. */
 	float TerrainRadius = 0.0f;
 	float MinOrbitDistance = 0.0f;
+	float TiltOverride = -1.0f;
 	FVector2D PendingOrbit = FVector2D::ZeroVector;
 	FHitResult AimHit;
 	bool bIsOrbiting = false;

@@ -173,3 +173,42 @@ float CloudField(float3 n, float time, float4 layer, int octaves)
                   + 0.060 * exp(-Pow2(sl - 0.78) / 0.030);
     return smoothstep(layer.y, layer.y + 0.15, f + climate);
 }
+
+// --- Tri-planar lookups on the planet ------------------------------------------
+// Real texture sets are laid over the globe by projecting along the three world
+// axes and blending by how squarely each axis faces the surface. Away from the
+// 45-degree seams one axis carries everything, and its two partners are skipped.
+float3 TriWeights(float3 n)
+{
+    float3 w = pow(abs(n), 6.0);
+    return w / (w.x + w.y + w.z);
+}
+
+float4 TriPlanar(Texture2D Tex, SamplerState Smp, float3 p, float3 w, float lod)
+{
+    float4 c = float4(0.0, 0.0, 0.0, 0.0);
+    [branch] if (w.x > 0.02) c += Texture2DSampleLevel(Tex, Smp, p.yz, lod) * w.x;
+    [branch] if (w.y > 0.02) c += Texture2DSampleLevel(Tex, Smp, p.zx, lod) * w.y;
+    [branch] if (w.z > 0.02) c += Texture2DSampleLevel(Tex, Smp, p.xy, lod) * w.z;
+    return c;
+}
+
+// Mip level for a texture tiled every tileKm, seen from dist planet units away
+// (the planet is 100 units across its radius, so a unit is 63.7 km). 0.00053 is
+// the angle one pixel subtends at 3840x2160.
+float DetailLod(float dist, float tileKm, float size)
+{
+    return max(log2(max(dist * 63.7 * 0.00053 / (tileKm / size), 1e-4)) + 0.5, 0.0);
+}
+
+// The simulation maps are 20 to 40 km per texel. From orbit that is invisible; from
+// 30,000 ft one texel fills the view and a blast edge is a straight line. Lookups
+// made near the ground are pushed around by three octaves of noise, about a texel
+// in all, so every edge becomes a ragged front with detail down to a few hundred metres.
+float2 WarpSimUV(float2 uv, float3 n)
+{
+    float2 bend = (float2(VNoise(n * 310.0), VNoise(n * 310.0 + 23.0)) - 0.5) * 1.3
+                + (float2(VNoise(n * 1500.0 + 5.0), VNoise(n * 1500.0 + 41.0)) - 0.5) * 0.55
+                + (float2(VNoise(n * 8200.0 + 9.0), VNoise(n * 8200.0 + 67.0)) - 0.5) * 0.18;
+    return uv + bend * float2(1.0 / 1024.0, 1.0 / 512.0);
+}

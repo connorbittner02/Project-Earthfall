@@ -158,7 +158,7 @@ void AEarthOrbitPawn::Tick(float DeltaSeconds)
 	// Below the procedural floor, over streamed terrain, the horizon flattens
 	// toward eye level, so the camera keeps pitching up to hold it in frame.
 	const float DeepTilt = 14.0f * (1.0f - FMath::SmoothStep(0.0015f, MinOrbitDistanceScale - 1.0f, AltitudeFraction));
-	CameraRotation = (CameraRotation.Quaternion() * FRotator(Tilt + DeepTilt, 0.0f, 0.0f).Quaternion()).Rotator();
+	CameraRotation = (CameraRotation.Quaternion() * FRotator(TiltOverride >= 0.0f ? TiltOverride : Tilt + DeepTilt, 0.0f, 0.0f).Quaternion()).Rotator();
 	// The near plane closes in with the ground; it is back at 0.1 by 2 units up.
 	GNearClippingPlane = FMath::Clamp((Distance - OrbitRadius) * 0.05f, 0.004f, 0.1f);
 

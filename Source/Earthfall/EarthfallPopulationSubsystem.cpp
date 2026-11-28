@@ -1042,11 +1042,13 @@ void UEarthfallPopulationSubsystem::MeasureCities(bool bReset)
 		{
 			City.InitialRegion = Region;
 			City.Tier = 0;
+			City.Ratio = 1.0f;
 			City.CountryId = GetCountryAtDirection(City.Direction);
 			continue;
 		}
 		if (City.InitialRegion < 1.0e5) continue;
 		const double Ratio = Region / City.InitialRegion;
+		City.Ratio = static_cast<float>(Ratio);
 		const int32 Tier = Ratio >= 2.2 ? 2 : (Ratio >= 1.5 ? 1 : 0);
 		if (Tier > City.Tier)
 		{
@@ -1072,7 +1074,22 @@ void UEarthfallPopulationSubsystem::FillCityGrowth(TArray<FColor>& Out) const
 		const double Ratio = Cell.BaselinePopulation > 0.0
 			? FMath::Max(0.0, Cell.LivingPopulation - Cell.DisplacedPopulation) / Cell.BaselinePopulation : 1.0;
 		const int32 Tier = CellCountry.Num() == Cells.Num() ? CountryStates[CellCountry[Index]].TechTier : 0;
-		Out[Index] = FColor(static_cast<uint8>(1 + FMath::RoundToInt32(254.0 * FMath::Clamp(Ratio / MaxGrowth, 0.0, 1.0))), static_cast<uint8>(Tier * 85), 0, 255);
+		Out[Index] = FColor(static_cast<uint8>(1 + FMath::RoundToInt32(254.0 * FMath::Clamp(Ratio / MaxGrowth, 0.0, 1.0))), static_cast<uint8>(Tier * 85),
+			static_cast<uint8>(FMath::RoundToInt32(255.0f * FMath::Clamp(Cell.PowerGridHealth, 0.0f, 1.0f))), 255);
+	}
+}
+
+void UEarthfallPopulationSubsystem::GetCities(TArray<FEarthfallCityInfo>& Out) const
+{
+	Out.Reset(Cities.Num());
+	for (const FCityAnchor& City : Cities)
+	{
+		if (City.InitialRegion < 1.0e5) continue;
+		FEarthfallCityInfo& Info = Out.AddDefaulted_GetRef();
+		Info.Name = City.Name;
+		Info.Direction = City.Direction;
+		Info.Tier = City.Tier;
+		Info.Growth = City.Ratio;
 	}
 }
 

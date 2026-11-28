@@ -10,6 +10,7 @@ class UDecalComponent;
 class USkyLightComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
+class UInstancedStaticMeshComponent;
 
 /**
  * Hands the view over from the orbital globe to streamed terrain in low orbit.
@@ -20,6 +21,10 @@ class UMaterialInterface;
  * from 1.10 R to 1.035 R the planet surface dissolves onto the tiles, the orbit
  * floor drops to the equivalent of 30,000 ft, and a planet-sized deferred decal
  * paints the destruction simulations onto the terrain by longitude and latitude.
+ *
+ * Below 1.05 R a second tileset, Cesium OSM Buildings, adds the real buildings of
+ * every mapped city, shaded by M_OSMBuildings from the same simulation maps. Hub
+ * cities that have outgrown their baseline get instanced megatowers and cranes.
  *
  * Nothing changes until tiles have actually loaded, so a build without the
  * plugin, or without a Cesium ion token, behaves exactly like the orbital game.
@@ -37,6 +42,10 @@ public:
 	float GetTerrainReadiness() const { return TerrainReadiness; }
 	/** 0 = orbital globe, 1 = fully handed over to streamed terrain. */
 	float GetCrossFade() const { return CrossFade; }
+	/** Building tiles on screen, megatower boxes and cranes standing: for logs and captures. */
+	int32 GetBuildingTileCount() const { return BuildingTileCount; }
+	int32 GetTowerCount() const { return TowerCount; }
+	int32 GetCraneCount() const { return CraneCount; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -44,6 +53,10 @@ protected:
 private:
 	void SpawnTerrain();
 	bool HasLoadedTiles() const;
+	/** Give every newly streamed building tile the simulation maps; returns the tile count. */
+	int32 BindBuildingTiles();
+	void UpdateArcologies();
+	void RebuildArcologies();
 
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<USceneComponent> Root;
@@ -68,6 +81,45 @@ private:
 	TObjectPtr<AActor> Georeference;
 	UPROPERTY(Transient)
 	TObjectPtr<AActor> Tileset;
+	/** The Cesium OSM Buildings tileset. */
+	UPROPERTY(Transient)
+	TObjectPtr<AActor> Buildings;
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> BuildingMaterial;
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> ArcologyMaterial;
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> BeaconMaterial;
+	/** Megatower bodies, their spires, crane masts and jibs, and the cranes' amber beacons. */
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<UInstancedStaticMeshComponent> TowerBoxes;
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<UInstancedStaticMeshComponent> TowerSpires;
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<UInstancedStaticMeshComponent> CraneBoxes;
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<UInstancedStaticMeshComponent> CraneBeacons;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> TowerMID;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> CraneMID;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> BeaconMID;
+
+	/** Building tile materials that already have the simulation maps. */
+	TSet<TWeakObjectPtr<UMaterialInstanceDynamic>> BoundBuildingMaterials;
+	FVector BoundSun = FVector::ZeroVector;
+	/** Terrain height in metres above the ellipsoid at each hub city, once sampled. */
+	TMap<FString, double> CityHeights;
+	TSet<FString> PendingCityHeights;
+	uint32 ArcologySignature = 0;
+	float BuildingBindTimer = 0.0f;
+	float ArcologyTimer = 0.0f;
+	float BeaconClock = 0.0f;
+	int32 BuildingTileCount = 0;
+	int32 TowerCount = 0;
+	int32 CraneCount = 0;
+	bool bBuildingsShown = false;
 
 	float TerrainRadius = 0.0f;
 	float TerrainReadiness = 0.0f;

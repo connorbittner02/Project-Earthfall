@@ -5,6 +5,7 @@
 #include "EarthfallPopulationSubsystem.h"
 #include "EarthfallProjectile.h"
 #include "EarthfallSandboxSubsystem.h"
+#include "EarthfallTerrainStreamer.h"
 #include "EarthfallTypes.h"
 #include "AssetCompilingManager.h"
 #include "Engine/World.h"
@@ -73,6 +74,60 @@ void AEarthfallCaptureDirector::BuildScript()
 		// interception shots use LaunchWeaponAt, which they can stop.
 		for (TActorIterator<AEarthfallProjectile> It(GetWorld()); It; ++It) It->bDefenseChecked = true;
 	};
+
+	// Real cities at 30,000 ft: Cesium OSM Buildings over Bing imagery, by night and
+	// by day, each then struck so a district collapses onto scanned rubble.
+	auto CityShots = [=, this](float Start)
+	{
+		auto Tilt = [this](float Degrees) { if (AEarthOrbitPawn* P = Pawn()) P->SetTiltOverride(Degrees); };
+		auto LogCity = [this](const TCHAR* Label)
+		{
+			for (TActorIterator<AEarthfallTerrainStreamer> It(GetWorld()); It; ++It)
+			{
+				UE_LOG(LogEarthfallCapture, Display, TEXT("EARTHFALL_CAPTURE %s: building_tiles=%d towers=%d cranes=%d readiness=%.2f"),
+					Label, It->GetBuildingTileCount(), It->GetTowerCount(), It->GetCraneCount(), It->GetTerrainReadiness());
+			}
+		};
+		// Tokyo, on the night side. A view's latitude is geocentric and the camera looks
+		// north, so the frame centres about 0.44 degrees north of the latitude given.
+		At(Start + 0.0f, [=, this]() { if (AEarthOrbitPawn* P = Pawn()) { P->SetHudMode(EEarthfallHudMode::Hidden); P->SetAimEnabled(false); } View(139.76f, 35.24f, 103.5f); });
+		At(Start + 4.0f, [=]() { View(139.76f, 35.24f, 99.0f); Tilt(58.0f); });
+		At(Start + 30.0f, [=, this]() { LogCity(TEXT("tokyo night")); Shot(TEXT("69-tokyo-30000ft-night-windows")); });
+		// Japan booms: Tokyo climbs to Megacity and then Arcology, and the megatowers and cranes go up.
+		At(Start + 30.2f, [this]()
+		{
+			if (UEarthfallPopulationSubsystem* People = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>())
+				People->BoostCountryGrowth(People->GetCountryAtDirection(EarthfallSolar::DirectionFromLatLon(35.7, 139.7)), 28.0f, 16.0f);
+		});
+		At(Start + 52.0f, [=, this]() { LogCity(TEXT("tokyo arcology")); Shot(TEXT("70-tokyo-arcology-towers-cranes")); });
+		// An EMP Grid-Buster over the city: nothing is broken, and everything goes dark.
+		At(Start + 52.2f, [=, this]() { Weapon(0, EarthfallMultipliers::DefaultIndex); if (AEarthOrbitPawn* P = Pawn()) { P->SetMultiplierIndex(EEarthfallMultiplier::BlastRadius, 0); P->SelectMunition(EarthfallMunitions::Emp); } });
+		At(Start + 52.6f, [=]() { Fire(35.68, 139.76); });
+		At(Start + 62.0f, [=, this]() { LogCity(TEXT("tokyo emp")); Shot(TEXT("71-tokyo-emp-blackout")); });
+		// Manhattan in daylight, from over the Lower Bay.
+		At(Start + 62.2f, [=]() { Tilt(-1.0f); View(-73.98f, 40.31f, 103.5f); });
+		At(Start + 66.0f, [=]() { View(-73.98f, 40.31f, 99.0f); Tilt(58.0f); });
+		At(Start + 90.0f, [=, this]() { LogCity(TEXT("new york day")); Shot(TEXT("72-new-york-30000ft-day")); });
+		// A bunker-buster rod at the smallest blast radius into the Bronx, 30 km up the
+		// frame. The shot waits for the fireball and the worst of the dust to clear.
+		At(Start + 90.2f, [=, this]() { if (AEarthOrbitPawn* P = Pawn()) P->SelectMunition(EarthfallMunitions::Penetrator); Fire(41.03, -73.95); });
+		At(Start + 136.0f, [=, this]() { LogCity(TEXT("new york struck")); Shot(TEXT("73-new-york-struck-district")); });
+		// Steeper, over the edge of the damage: rubble, char and standing stumps.
+		At(Start + 136.2f, [=]() { View(-73.95f, 40.55f, 99.0f); Tilt(32.0f); });
+		At(Start + 148.0f, [this]() { Shot(TEXT("74-new-york-ruins-rubble")); });
+		At(Start + 148.2f, [=, this]() { Tilt(-1.0f); if (AEarthOrbitPawn* P = Pawn()) { P->SelectMunition(EarthfallMunitions::Standard); P->SetMultiplierIndex(EEarthfallMultiplier::BlastRadius, EarthfallMultipliers::DefaultIndex); P->ResetSimulation(); } });
+		return Start + 148.6f;
+	};
+	FString CaptureSet;
+	FParse::Value(FCommandLine::Get(), TEXT("EarthfallCaptureSet="), CaptureSet);
+	if (CaptureSet == TEXT("city"))
+	{
+		// -EarthfallCaptureSet=city runs only these, for quick iteration on the low-altitude look.
+		const float End = CityShots(0.0f);
+		At(End, [this]() { Finish(); });
+		Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
+		return;
+	}
 
 	// The shot list assumes -EarthfallSunLon=-60 -EarthfallSunLat=10: the Americas
 	// in daylight, Asia in darkness and the terminator over Africa and Europe.
@@ -515,7 +570,9 @@ void AEarthfallCaptureDirector::BuildScript()
 	At(265.0f, [this]() { Shot(TEXT("67-tech-tiers-at-night")); });
 	At(265.1f, [this]() { if (AEarthOrbitPawn* P = Pawn()) { P->ToggleInspectMode(); P->SetHudMode(EEarthfallHudMode::Hidden); } });
 	At(266.2f, [this]() { Shot(TEXT("68-tech-tiers-at-night-clean")); });
-	At(266.8f, [this]() { Finish(); });
+	TimeOffset = 0.0f;
+	const float CityEnd = CityShots(50.2f + 11.2f + 266.8f);
+	At(CityEnd, [this]() { Finish(); });
 
 	Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
 }

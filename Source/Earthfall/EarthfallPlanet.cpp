@@ -218,6 +218,7 @@ void AEarthfallPlanet::BindSimulationTextures(UMaterialInstanceDynamic* Material
 	if (TsunamiRTs.IsValidIndex(TsunamiReadIndex)) Material->SetTextureParameterValue(TEXT("TsunamiRT"), TsunamiRTs[TsunamiReadIndex]);
 	if (FireRTs.IsValidIndex(FireReadIndex)) Material->SetTextureParameterValue(TEXT("FireMaskRT"), FireRTs[FireReadIndex]);
 	if (PlagueRT) Material->SetTextureParameterValue(TEXT("PlagueRT"), PlagueRT);
+	if (CityGrowthTexture) Material->SetTextureParameterValue(TEXT("CityGrowthObject"), CityGrowthTexture);
 }
 
 void AEarthfallPlanet::SetSurfaceFade(float Fade)

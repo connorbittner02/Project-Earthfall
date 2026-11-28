@@ -102,8 +102,10 @@ void AEarthfallSandboxView::Tick(float DeltaSeconds)
 	for (const FEarthfallMarker& Marker : Sandbox->GetMarkers())
 	{
 		if (Marker.Kind >= MarkerKindCount) continue;
-		// Markers keep a readable size on screen from any distance, like the ejecta.
-		const float Apparent = FMath::Clamp(static_cast<float>(FVector::Dist(Marker.Position, Eye)) / 140.0f, 0.35f, 4.0f);
+		// Markers keep a readable size on screen from any distance, like the ejecta. The
+		// floor is low enough to hold that down to 30,000 ft, where a marker sized for
+		// orbit would be a sheet kilometres across.
+		const float Apparent = FMath::Clamp(static_cast<float>(FVector::Dist(Marker.Position, Eye)) / 140.0f, 0.003f, 4.0f);
 		const float Size = Marker.Size * Apparent;
 		if (Marker.Kind == EarthfallMarkers::Army || Marker.Kind == EarthfallMarkers::AirWing)
 		{

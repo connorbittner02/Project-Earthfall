@@ -77,6 +77,17 @@ struct FEarthfallPopulationCell
 	float CityLightPotential = 0.0f;
 };
 
+/** A hub city as the view needs it: where it is and how far it has outgrown its baseline. */
+struct FEarthfallCityInfo
+{
+	FString Name;
+	FVector Direction = FVector::ForwardVector;
+	/** 0 city, 1 megacity, 2 arcology. */
+	int32 Tier = 0;
+	/** People within 220 km against the baseline. */
+	float Growth = 1.0f;
+};
+
 struct FEarthfallNewsEvent
 {
 	int32 Priority = 0;
@@ -158,7 +169,8 @@ public:
 	void BoostCountryGrowth(int32 CountryId, float Multiplier, float Seconds);
 	/**
 	 * One pixel per population cell for the surface shader. R = 1 + 254 * settled people / baseline / MaxGrowth
-	 * (never zero, so an unbound texture reads as 'no data'); G = the nation's tech tier * 85.
+	 * (never zero, so an unbound texture reads as 'no data'); G = the nation's tech tier * 85;
+	 * B = the cell's power grid health.
 	 */
 	void FillCityGrowth(TArray<FColor>& Out) const;
 	/** Tech tier 0..3 of a nation, for the city-light colour. */
@@ -170,6 +182,8 @@ public:
 	/** The largest hub city in a nation: its name, tier (0 city, 1 megacity, 2 arcology) and size against baseline. */
 	bool GetLargestCity(int32 CountryId, FString& OutName, int32& OutTier, float& OutGrowth) const;
 	static const TCHAR* CityTierLabel(int32 Tier);
+	/** Every tracked hub city with its tier and growth, for the megatowers raised around it. */
+	void GetCities(TArray<FEarthfallCityInfo>& Out) const;
 	static const TCHAR* StabilityLabel(EEarthfallStability Stability);
 
 	/** Simulation clock shared with the ash advection shader so both use the same wind. */
@@ -184,6 +198,7 @@ private:
 		double InitialRegion = 0.0;
 		int32 Tier = 0;
 		int32 CountryId = 0;
+		float Ratio = 1.0f;
 	};
 
 	static constexpr int32 GridWidth = 512;

@@ -16,12 +16,21 @@ float4 Main(float3 RelPos, float3 CamPos,
             Texture2D NightTex, SamplerState NightTexSampler,
             Texture2D MasksTex, SamplerState MasksTexSampler,
             Texture2D PlagueTex, SamplerState PlagueTexSampler,
+            Texture2D RubbleA, SamplerState RubbleASampler,
+            Texture2D RubbleNR, SamplerState RubbleNRSampler,
+            Texture2D RockA, SamplerState RockASampler,
+            Texture2D RockNR, SamplerState RockNRSampler,
+            Texture2D GrowthTex, SamplerState GrowthTexSampler,
             float3 Sun, float Time, float4 Terrain, float4 Atmos, float4 Column, float Mode)
 {
     float3 n = normalize(RelPos + CamPos);
     // Left-handed world: east is -Y, so longitude is atan2(-Y, X). V runs south.
     float2 uv = float2(atan2(-n.y, n.x) / 6.2831853 + 0.5,
                        0.5 - asin(clamp(n.z, -1.0, 1.0)) / 3.14159265);
+    // City and water lookups keep the true position; the coarse simulation maps are
+    // read through a noise warp that fades in with the hand-over to terrain.
+    float2 trueUV = uv;
+    uv = lerp(uv, WarpSimUV(uv, n), Terrain.x);
 
     float3 Mask = Texture2DSampleLevel(MaskTex, MaskTexSampler, uv, 0).rgb;
     float3 Ash = Texture2DSampleLevel(AshTex, AshTexSampler, uv, 0).rgb;
@@ -39,7 +48,7 @@ float4 Main(float3 RelPos, float3 CamPos,
     // Open water, from the orbital water mask. That mask is about 5 km per texel,
     // so only water well clear of the coast is treated; the shallows keep the
     // streamed imagery's own colour.
-    float3 masks = Texture2DSampleLevel(MasksTex, MasksTexSampler, uv, 0).rgb;
+    float3 masks = Texture2DSampleLevel(MasksTex, MasksTexSampler, trueUV, 0).rgb;
     float water = smoothstep(0.80, 0.98, masks.r) * (1.0 - masks.b);
     // Water does not char.
     scorch *= 1.0 - smoothstep(0.35, 0.65, masks.r);
@@ -88,6 +97,39 @@ float4 Main(float3 RelPos, float3 CamPos,
                       VNoise((n - east * 0.0015) * 1700.0 + float3(0.0, 0.0, floor(Time * 0.35) * 7.0)) * 0.92);
     rageSmoke = max(rageSmoke * 0.7, rageOn * smoothstep(0.60, 0.84, plume) * (1.0 - hotspot));
 
+    // Real ground. Wherever something has been destroyed, the flat colours below
+    // are replaced by Poly Haven scans: 'rubble' for ejecta, rims and flattened
+    // districts, 'dark_rock' for crater floors, char and burn scars. They tile every
+    // 2.4 km, far larger than life, so slabs and boulders still resolve from 30,000 ft. The
+    // normal map is lit here against the sun, since a decal blends colour only.
+    float destroyed = max(max(scorch, saturate(crater.r + crater.g)), max(saturate(Fire.g), hotspot));
+    float3 rubbleCol = float3(0.22, 0.19, 0.16);
+    float3 rockCol = float3(0.060, 0.052, 0.046);
+    float groundRough = 0.90;
+    float3 charCol = float3(0.020, 0.017, 0.015);
+    [branch] if (destroyed > 0.01 && Mode != 1.0)
+    {
+        float3 tw = TriWeights(n);
+        float3 tp = n * 2650.0;
+        float lod = DetailLod(length(RelPos), 2.4, 2048.0);
+        float3 rubbleNR = TriPlanar(RubbleNR, RubbleASampler, tp, tw, lod).rgb;
+        float3 rockNR = TriPlanar(RockNR, RubbleASampler, tp * 0.71 + 0.37, tw, lod).rgb;
+        float2 sunFlat = float2(dot(Sun, east), dot(Sun, north));
+        // Patches a few kilometres across keep the tiling from reading as a grid.
+        float patches = 0.75 + 0.5 * VNoise(n * 1900.0);
+        // The same scans again at 16 km, as broad light and dark fields of debris.
+        float3 fields = TriPlanar(RubbleA, RubbleASampler, tp * 0.146 + 0.21, tw, max(lod - 2.8, 0.0)).rgb;
+        patches *= 0.45 + 2.2 * dot(fields, float3(0.33, 0.33, 0.33));
+        rubbleCol = TriPlanar(RubbleA, RubbleASampler, tp, tw, lod).rgb * patches
+                  * clamp(1.0 + 2.4 * dot(rubbleNR.rg * 2.0 - 1.0, sunFlat), 0.22, 2.2);
+        rockCol = TriPlanar(RockA, RubbleASampler, tp * 0.71 + 0.37, tw, lod).rgb * patches
+                * clamp(1.0 + 2.4 * dot(rockNR.rg * 2.0 - 1.0, sunFlat), 0.22, 2.2);
+        groundRough = lerp(rockNR.b, rubbleNR.b, saturate(crater.g * 2.0));
+        // Where there was a city, what is left on the ground is its rubble.
+        float urban = saturate(dot(Texture2DSampleLevel(NightTex, NightTexSampler, uv, 0).rgb, float3(0.4, 0.4, 0.4)) * 4.0);
+        charCol = lerp(rockCol * 0.55, rubbleCol * 0.70, urban * (0.5 + 0.5 * VNoise(n * 6000.0)));
+    }
+
     if (Mode < 0.5 || Mode > 1.5)
     {
         // Layers composited front to back in the surface shader's order.
@@ -97,10 +139,17 @@ float4 Main(float3 RelPos, float3 CamPos,
         // A decal's emissive is scaled by its opacity, so anything that must glow
         // needs cover beneath it: the night side (a daytime photograph otherwise)
         // and ground that is burning before its scar has built up.
-        x = night * 0.92;                        col = lerp(col, float3(0.004, 0.005, 0.008), x); a = a + x - a * x;
-        x = saturate(Fire.r * 2.0) * 0.85;       col = lerp(col, float3(0.035, 0.030, 0.028), x); a = a + x - a * x;
+        // Night. Open country is covered almost to black. A lit city is not: there the
+        // cover lifts and the streamed photograph shows through under a dim sodium sky
+        // light, so the lit streets are the real streets. A dead grid gets the cover back.
+        float3 Growth = Texture2DSampleLevel(GrowthTex, MaskTexSampler, trueUV, 0).rgb;
+        float gridPower = (Growth.r < 0.002 ? 1.0 : saturate(Growth.b)) * (1.0 - max(saturate(Mask.r * 4.0), saturate(Wave.b * 9.0)));
+        float cityGlow = saturate(dot(Texture2DSampleLevel(NightTex, NightTexSampler, trueUV, 0).rgb, float3(0.45, 0.45, 0.45)) * 2.6);
+        cityGlow *= 0.70 + 0.30 * VNoise(n * 5200.0);
+        x = night * 0.92 * (1.0 - 0.94 * cityGlow * gridPower); col = lerp(col, float3(0.004, 0.005, 0.008), x); a = a + x - a * x;
+        x = saturate(Fire.r * 2.0) * 0.85;       col = lerp(col, rockCol * 0.30, x); a = a + x - a * x;
         x = pow(deposit, 0.7) * 0.35;            col = lerp(col, float3(0.25, 0.20, 0.16), x); a = a + x - a * x;
-        x = saturate(Fire.g * 0.92) * 0.80;      col = lerp(col, float3(0.035, 0.030, 0.028), x); a = a + x - a * x;
+        x = saturate(Fire.g * 0.92) * 0.80;      col = lerp(col, rockCol * 0.30, x); a = a + x - a * x;
         // Inundated ground: dark, wet mud and standing water, not foam.
         // The flood mask is about 39 km per texel and its coast sits inland of the
         // streamed one, so the wet band is widened by taking the strongest of five
@@ -116,12 +165,12 @@ float4 Main(float3 RelPos, float3 CamPos,
         // Only land floods; the open sea keeps its own shading.
         float wet = smoothstep(0.04, 0.35, floodNear) * 0.80 * (1.0 - water);
         x = wet;                                 col = lerp(col, float3(0.034, 0.036, 0.038), x); a = a + x - a * x;
-        x = scorch * 0.94;                       col = lerp(col, float3(0.020, 0.017, 0.015), x); a = a + x - a * x;
-        x = saturate(crater.g * 1.3) * 0.40;     col = lerp(col, float3(0.22, 0.19, 0.16), x); a = a + x - a * x;
-        x = crater.r * 0.45;                     col = lerp(col, float3(0.015, 0.013, 0.012), x); a = a + x - a * x;
+        x = scorch * 0.94;                       col = lerp(col, charCol, x); a = a + x - a * x;
+        x = saturate(crater.g * 1.3) * 0.80;     col = lerp(col, rubbleCol * 0.85, x); a = a + x - a * x;
+        x = saturate(crater.r * 1.4) * 0.80;     col = lerp(col, rockCol * 0.45, x); a = a + x - a * x;
         // Sunlit and shadowed crater slopes.
         x = saturate(-relief) * 0.70;            col = lerp(col, float3(0.010, 0.009, 0.008), x); a = a + x - a * x;
-        x = saturate(relief) * 0.35;             col = lerp(col, float3(0.50, 0.45, 0.40), x); a = a + x - a * x;
+        x = saturate(relief) * 0.35;             col = lerp(col, rubbleCol * 1.7, x); a = a + x - a * x;
         // Deep ocean blue under the glint added in the emissive pass.
         x = water * 0.80;                        col = lerp(col, float3(0.010, 0.040, 0.105), x); a = a + x - a * x;
         x = saturate(crest * 0.7);               col = lerp(col, float3(0.74, 0.95, 1.00), x); a = a + x - a * x;
@@ -140,7 +189,7 @@ float4 Main(float3 RelPos, float3 CamPos,
         // in proportion to how much of that opacity is flood water. 0.15 and 0.28 were
         // tried: seen at a grazing angle, ground that glossy mirrors the warm horizon
         // and reads as bright sand dunes. 0.55 is a damp sheen that stays dark.
-        if (Mode > 1.5) return float4(lerp(0.90, 0.55, saturate(wet * (1.0 - haze) / max(a, 1e-3))), 0.0, 0.0, 0.0);
+        if (Mode > 1.5) return float4(lerp(lerp(0.90, groundRough, saturate(destroyed * 2.0)), 0.55, saturate(wet * (1.0 - haze) / max(a, 1e-3))), 0.0, 0.0, 0.0);
         return float4(col, saturate(a) * Terrain.x);
     }
 
@@ -152,12 +201,27 @@ float4 Main(float3 RelPos, float3 CamPos,
     float veinMask = smoothstep(0.95 - 0.55 * heat, 1.0, veins);
     // Open water quenches most of the melt, as on the orbital surface.
     float molten = saturate(veinMask * (0.35 + heat) + heat * heat * heat * 0.8) * saturate(Mask.r * 1.6) * (1.0 - smoothstep(0.35, 0.65, masks.r));
+    // A vein that is a hairline from orbit is five kilometres wide from 30,000 ft.
+    // Close up it breaks into what it would be: a web of narrow glowing cracks.
+    float crackA = 1.0 - abs(2.0 * VNoise(n * 9000.0 + 3.0) - 1.0);
+    float crackB = 1.0 - abs(2.0 * VNoise(n * 31000.0 + 7.0) - 1.0);
+    float cracks = saturate(smoothstep(0.90, 0.99, crackA) + 0.6 * smoothstep(0.93, 0.995, crackB));
+    molten *= lerp(1.0, cracks * 2.5, Terrain.x);
     float3 magmaCol = lerp(float3(0.90, 0.06, 0.00), float3(1.00, 0.58, 0.14), saturate(molten * heat * 1.6));
     float3 emissive = magmaCol * molten * (1.5 + 11.0 * heat);
 
     float flames = VNoise(n * 520.0 + float3(0.0, 0.0, Time * 0.8)) * VNoise(n * 1400.0 - float3(Time * 1.1, 0.0, 0.0));
     float flicker = 0.75 + 0.25 * sin(Time * 9.0 + veins * 31.0);
-    emissive += float3(1.00, 0.27, 0.04) * smoothstep(0.05, 0.6, Fire.r) * smoothstep(0.10, 0.45, flames) * flicker * 1.7;
+    // From orbit a wildfire is a mottled glow. On the ground it is its fronts: thin,
+    // wandering lines of flame along the contours of a slow noise field, each with a
+    // narrow halo, and a scatter of embers behind them.
+    float fireField2 = Fbm(n * 5200.0 + float3(0.0, 0.0, Time * 0.015), 4);
+    float fireLine = smoothstep(0.022, 0.0, abs(fireField2 - 0.5));
+    float fireHalo = smoothstep(0.11, 0.0, abs(fireField2 - 0.5));
+    float fireEmbers = pow(VNoise(n * 70000.0 + float3(0.0, Time * 0.4, 0.0)), 7.0);
+    float3 fireFar = float3(1.00, 0.27, 0.04) * smoothstep(0.10, 0.45, flames) * 1.7;
+    float3 fireNear = float3(1.00, 0.62, 0.18) * fireLine * 5.0 + float3(1.00, 0.22, 0.03) * (fireHalo * 0.55 + fireEmbers * 1.6);
+    emissive += lerp(fireFar, fireNear, Terrain.x) * smoothstep(0.05, 0.6, Fire.r) * flicker;
     // Ocean: the orbital shader's GGX sunglint and grazing sky reflection, on
     // procedural swell with three finer wave trains.
     float3 V = normalize(-RelPos);
@@ -181,14 +245,34 @@ float4 Main(float3 RelPos, float3 CamPos,
 
     // Bio-cloud glow, and fires where the fighting is.
     emissive += lerp(float3(0.42, 0.16, 0.55), float3(0.30, 0.62, 0.10), smoothstep(0.10, 0.45, infection)) * bioHaze * 0.40;
-    emissive += (float3(1.00, 0.16, 0.01) * hotspot * 1.3 + float3(1.00, 0.36, 0.04) * fireCore * 1.5) * rageFlames;
+    // From orbit the fighting is glowing clusters. On the ground each cluster is
+    // burning streets: fine fire lines and embers inside it, not a lit sheet.
+    float rageField = Fbm(n * 11000.0 + float3(0.0, Time * 0.02, 0.0), 4);
+    float rageLine = smoothstep(0.020, 0.0, abs(rageField - 0.5));
+    float rageHalo = smoothstep(0.09, 0.0, abs(rageField - 0.5));
+    float3 rageFar = (float3(1.00, 0.16, 0.01) * hotspot * 1.3 + float3(1.00, 0.36, 0.04) * fireCore * 1.5) * rageFlames;
+    float3 rageNear = (float3(1.00, 0.60, 0.16) * rageLine * 4.5 + float3(1.00, 0.20, 0.02) * (rageHalo * 0.45 + fireEmbers * 1.4))
+                    * hotspot * (0.6 + 0.4 * rageFlames);
+    emissive += lerp(rageFar, rageNear, Terrain.x);
 
     // City lights: streamed imagery is a daytime photograph, so the night side
     // gets the Black Marble lights back, broken into points as in low orbit, and
     // dead wherever the grid is down.
     float blackout = max(saturate(Mask.r * 4.0), saturate(Wave.b * 9.0));
-    float sparkle = Hash13(floor(n * 14000.0));
-    float3 lights = Texture2DSampleLevel(NightTex, NightTexSampler, uv, 0).rgb;
-    emissive += lights * float3(1.0, 0.78, 0.45) * 4.2 * (0.08 + 4.5 * pow(sparkle, 5.0)) * 0.6 * night * (1.0 - blackout);
+    // The streets themselves are the photograph, lit by the sky light. What is
+    // added here is what a photograph cannot give: the glow of the lit air over the
+    // city, and a scatter of bright points (floodlit yards, signs, stadiums), each
+    // jittered inside its cell so they never fall on a grid.
+    float3 lights = Texture2DSampleLevel(NightTex, NightTexSampler, trueUV, 0).rgb;
+    float lampPixel = length(RelPos) * 33.8;
+    float3 lampP = n * 52000.0;
+    float3 lampCell = floor(lampP);
+    float3 lampAt = 0.5 + (Hash33(lampCell) - 0.5) * 0.6;
+    float lamp = smoothstep(0.16, 0.04, length(frac(lampP) - lampAt)) * step(0.90, Hash13(lampCell + 11.0));
+    float lampFade = saturate(2.0 - lampPixel / 20.0);
+    float airGlow = 0.03 + 0.06 * VNoise(n * 2600.0);
+    float3 lampCol = lerp(float3(1.0, 0.74, 0.40), float3(0.86, 0.93, 1.0), step(0.70, Hash13(lampCell + 3.0)));
+    float gridUp = (Texture2DSampleLevel(GrowthTex, MaskTexSampler, trueUV, 0).r < 0.002 ? 1.0 : saturate(Texture2DSampleLevel(GrowthTex, MaskTexSampler, trueUV, 0).b)) * (1.0 - blackout);
+    emissive += lights * (float3(1.0, 0.74, 0.40) * airGlow + lampCol * lamp * lampFade * 7.0) * 2.5 * night * gridUp;
     return float4(emissive * (1.0 - 0.8 * haze) * Terrain.x, 0.0);
 }
