@@ -114,18 +114,18 @@ void UEarthfallPopulationSubsystem::AdvancePlumes(float DeltaTime)
 {
 	float TotalSoot = 0.0f;
 	float TotalFallout = 0.0f;
-	const float SootKeep = FMath::Exp(-DeltaTime / SootDecaySeconds);
 	const float FalloutKeep = FMath::Exp(-DeltaTime / FalloutDecaySeconds);
 	for (FEarthfallAshPlume& Plume : Plumes)
 	{
 		// Same wind field the GPU uses to move the visible plume.
-		const FVector2D Wind = EarthfallWind::Velocity(Plume.Latitude, Plume.Longitude, WindTime);
+		// As in ash_advection.hlsl: lofted carbon rides the faster upper wind and outlasts low smoke.
+		const FVector2D Wind = EarthfallWind::Velocity(Plume.Latitude, Plume.Longitude, WindTime) * (0.55 + 1.75 * Plume.Loft);
 		Plume.Longitude += Wind.X / FMath::Max(FMath::Cos(Plume.Latitude), 0.08) * DeltaTime;
 		Plume.Latitude = FMath::Clamp(Plume.Latitude + Wind.Y * DeltaTime, -1.50, 1.50);
 		if (Plume.Longitude > PI) Plume.Longitude -= 2.0 * PI;
 		if (Plume.Longitude < -PI) Plume.Longitude += 2.0 * PI;
 		Plume.RadiusRadians = FMath::Min(Plume.RadiusRadians + PlumeSpreadRadiansPerSecond * DeltaTime, 0.95f);
-		Plume.Soot *= SootKeep;
+		Plume.Soot *= FMath::Exp(-DeltaTime / (SootDecaySeconds * (1.0f + 2.0f * Plume.Loft)));
 		Plume.Fallout *= FalloutKeep;
 		TotalSoot += Plume.Soot;
 		TotalFallout += Plume.Fallout;
@@ -605,6 +605,7 @@ void UEarthfallPopulationSubsystem::ApplyStrike(const FVector& LocalDirection, f
 		Plume.RadiusRadians = FMath::Clamp(StrikeAngle * 1.6f, 0.06f, 0.95f);
 		Plume.Soot = Spec.Soot * 6.0f * PlumeScale;
 		Plume.Fallout = Spec.Fallout * PlumeScale;
+		Plume.Loft = FMath::Clamp(0.30f + 0.06f * FMath::Log2(FMath::Max(YieldMultiplier, 0.01f)) + (WeaponIndex == EarthfallWeapons::Nuclear ? 0.15f : 0.0f), 0.08f, 1.0f);
 	}
 
 	// Living, displaced and grid totals come from the authoritative grid. Running

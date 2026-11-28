@@ -92,6 +92,8 @@ AEarthfallPlanet::AEarthfallPlanet()
 	CloudMaterial = Clouds.Succeeded() ? Clouds.Object : nullptr;
 	AtmosphereMaterial = Atmosphere.Succeeded() ? Atmosphere.Object : nullptr;
 	AshAdvectionMaterial = Advection.Succeeded() ? Advection.Object : nullptr;
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> VapourAdvection(TEXT("/Game/Earth/Materials/M_VapourAdvection.M_VapourAdvection"));
+	VapourAdvectionMaterial = VapourAdvection.Succeeded() ? VapourAdvection.Object : nullptr;
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> TsunamiStep(TEXT("/Game/Earth/Materials/M_TsunamiStep.M_TsunamiStep"));
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> FireStep(TEXT("/Game/Earth/Materials/M_FireStep.M_FireStep"));
 	TsunamiStepMaterial = TsunamiStep.Succeeded() ? TsunamiStep.Object : nullptr;
@@ -241,6 +243,14 @@ void AEarthfallPlanet::SetCameraDistance(float Distance, float AimRadius)
 	};
 	const float Low = Proximity(LowCloudScale);
 	const float High = Proximity(HighCloudScale);
+	if (bCloudQualityDirty && LowCloudMID)
+	{
+		// Quality = (march steps, deck thickness in radians), as in earth_clouds.hlsl.
+		bCloudQualityDirty = false;
+		LowCloudMID->SetVectorParameterValue(TEXT("Quality"), FLinearColor(bCloudUltra ? 8.0f : 6.0f, 0.0042f, 0.0f, 0.0f));
+		if (HighCloudMID) HighCloudMID->SetVectorParameterValue(TEXT("Quality"), FLinearColor(2.0f, 0.0020f, 0.0f, 0.0f));
+		UE_LOG(LogTemp, Display, TEXT("EARTHFALL_CLOUDS quality=%s steps=%d"), bCloudUltra ? TEXT("ULTRA") : TEXT("HIGH"), bCloudUltra ? 8 : 6);
+	}
 	if (LowCloudMID && !FMath::IsNearlyEqual(Low, LowCloudProximity, 0.002f))
 	{
 		LowCloudProximity = Low;
@@ -272,6 +282,9 @@ void AEarthfallPlanet::CreateMaterialInstances()
 	HighCloudMID = CloudMaterial ? UMaterialInstanceDynamic::Create(CloudMaterial, this) : nullptr;
 	AtmosphereMID = AtmosphereMaterial ? UMaterialInstanceDynamic::Create(AtmosphereMaterial, this) : nullptr;
 	AshAdvectionMID = AshAdvectionMaterial ? UMaterialInstanceDynamic::Create(AshAdvectionMaterial, this) : nullptr;
+	VapourAdvectionMID = VapourAdvectionMaterial ? UMaterialInstanceDynamic::Create(VapourAdvectionMaterial, this) : nullptr;
+	FString CloudQuality;
+	if (FParse::Value(FCommandLine::Get(), TEXT("EarthfallCloudQuality="), CloudQuality)) bCloudUltra = CloudQuality.Equals(TEXT("Ultra"), ESearchCase::IgnoreCase);
 
 	if (SurfaceMID)
 	{
@@ -548,6 +561,20 @@ void AEarthfallPlanet::BuildAshPlumeResources()
 		Target->UpdateResourceImmediate(true);
 		AshPlumeRTs[Index] = Target;
 	}
+	VapourRTs.SetNum(2);
+	for (int32 Index = 0; Index < VapourRTs.Num(); ++Index)
+	{
+		UTextureRenderTarget2D* Target = NewObject<UTextureRenderTarget2D>(this, *FString::Printf(TEXT("VapourRT_%d"), Index));
+		Target->RenderTargetFormat = ETextureRenderTargetFormat::RTF_RGBA16f;
+		Target->ClearColor = FLinearColor::Black;
+		Target->bAutoGenerateMips = false;
+		Target->AddressX = TA_Wrap;
+		Target->AddressY = TA_Clamp;
+		Target->Filter = TF_Bilinear;
+		Target->InitAutoFormat(AshWidth, AshHeight);
+		Target->UpdateResourceImmediate(true);
+		VapourRTs[Index] = Target;
+	}
 	AshStampTexture = CreateStampTexture([](float Distance, float)
 	{
 		const float Density = FMath::Exp(-Distance * Distance * 3.8f) * (1.0f - FMath::SmoothStep(0.82f, 1.0f, Distance));
@@ -561,6 +588,11 @@ void AEarthfallPlanet::BuildAshPlumeResources()
 void AEarthfallPlanet::BindAshTexture()
 {
 	if (!AshPlumeRTs.IsValidIndex(AshReadIndex)) return;
+	if (VapourRTs.IsValidIndex(AshReadIndex))
+	{
+		if (LowCloudMID) LowCloudMID->SetTextureParameterValue(TEXT("VapourRT"), VapourRTs[AshReadIndex]);
+		if (HighCloudMID) HighCloudMID->SetTextureParameterValue(TEXT("VapourRT"), VapourRTs[AshReadIndex]);
+	}
 	UTextureRenderTarget2D* Current = AshPlumeRTs[AshReadIndex];
 	if (SurfaceMID) SurfaceMID->SetTextureParameterValue(TEXT("AshPlumeRT"), Current);
 	if (LowCloudMID) LowCloudMID->SetTextureParameterValue(TEXT("AshPlumeRT"), Current);
@@ -579,6 +611,18 @@ void AEarthfallPlanet::StampAsh(const FVector& LocalDirection, float AngularRadi
 	AshActiveSeconds = AshSimulationTailSeconds;
 }
 
+void AEarthfallPlanet::StampVapour(const FVector& LocalDirection, float AngularRadius, float Steam, float Dust, float LoftedSoot)
+{
+	if (!GetWorld() || VapourRTs.Num() != 2 || !AshStampTexture || (Steam <= 0.0f && Dust <= 0.0f && LoftedSoot <= 0.0f)) return;
+	UCanvas* Canvas = nullptr;
+	FVector2D CanvasSize;
+	FDrawToRenderTargetContext Context;
+	UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(GetWorld(), VapourRTs[AshReadIndex], Canvas, CanvasSize, Context);
+	DrawStamp(Canvas, CanvasSize, AshStampTexture, LocalDirection, AngularRadius, FLinearColor(Steam, Dust, LoftedSoot, 1.0f));
+	UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(GetWorld(), Context);
+	AshActiveSeconds = AshSimulationTailSeconds;
+}
+
 void AEarthfallPlanet::AdvanceAsh(float StepSeconds)
 {
 	if (!GetWorld() || AshPlumeRTs.Num() != 2 || !AshAdvectionMID) return;
@@ -587,7 +631,18 @@ void AEarthfallPlanet::AdvanceAsh(float StepSeconds)
 	const int32 WriteIndex = 1 - AshReadIndex;
 	AshAdvectionMID->SetTextureParameterValue(TEXT("AshSource"), AshPlumeRTs[AshReadIndex]);
 	if (FireRTs.IsValidIndex(FireReadIndex)) AshAdvectionMID->SetTextureParameterValue(TEXT("FireSource"), FireRTs[FireReadIndex]);
-	AshAdvectionMID->SetVectorParameterValue(TEXT("Step"), FLinearColor(StepSeconds, WindTime, 1.0f / AshWidth, 1.0f / AshHeight));
+	const FLinearColor Step(StepSeconds, WindTime, 1.0f / AshWidth, 1.0f / AshHeight);
+	AshAdvectionMID->SetVectorParameterValue(TEXT("Step"), Step);
+	// Both maps step from the same previous state of both.
+	const bool bVapour = VapourRTs.Num() == 2 && VapourAdvectionMID != nullptr;
+	if (bVapour)
+	{
+		AshAdvectionMID->SetTextureParameterValue(TEXT("VapourSource"), VapourRTs[AshReadIndex]);
+		VapourAdvectionMID->SetTextureParameterValue(TEXT("AshSource"), AshPlumeRTs[AshReadIndex]);
+		VapourAdvectionMID->SetTextureParameterValue(TEXT("VapourSource"), VapourRTs[AshReadIndex]);
+		VapourAdvectionMID->SetVectorParameterValue(TEXT("Step"), Step);
+		UKismetRenderingLibrary::DrawMaterialToRenderTarget(GetWorld(), VapourRTs[WriteIndex], VapourAdvectionMID);
+	}
 	UKismetRenderingLibrary::DrawMaterialToRenderTarget(GetWorld(), AshPlumeRTs[WriteIndex], AshAdvectionMID);
 	AshReadIndex = WriteIndex;
 	BindAshTexture();
@@ -752,6 +807,10 @@ void AEarthfallPlanet::ResetPlanet()
 	{
 		if (AshTarget) UKismetRenderingLibrary::ClearRenderTarget2D(GetWorld(), AshTarget, FLinearColor::Black);
 	}
+	for (UTextureRenderTarget2D* VapourTarget : VapourRTs)
+	{
+		if (VapourTarget) UKismetRenderingLibrary::ClearRenderTarget2D(GetWorld(), VapourTarget, FLinearColor::Black);
+	}
 	AshReadIndex = 0;
 	AshActiveSeconds = 0.0f;
 	AshStepAccumulator = 0.0f;
@@ -840,8 +899,32 @@ void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
 	// Visible plume: lofted mass scales sub-linearly so a 100x strike is a
 	// continental smear rather than a solid black disc.
 	const float PlumeScale = FMath::Pow(FMath::Max(Strike.YieldMultiplier, 0.01f), 0.4f) * FMath::Pow(Strike.FalloutMultiplier, 0.7f);
-	if (!bEmp) StampAsh(LocalDirection, BlastAngle * 1.4f + 0.03f,
-		FMath::Min(Spec.Soot * 0.9f * PlumeScale, 3.0f), FMath::Min(Spec.Fallout * 0.9f * PlumeScale, 3.0f));
+	// What goes up depends on what was hit, how hard, and how hot.
+	float PlumeLoft = 0.3f;
+	if (!bEmp)
+	{
+		// 1. Surface material. Sea gives steam and salt mist and almost no carbon;
+		// ice gives cryo mist; a city burns to dense black soot; open land gives
+		// carbon and rock dust.
+		const bool bIce = FMath::Abs(LocalDirection.Z) > 0.92;
+		const bool bUrban = !bOceanStrike && !bIce && Population && Population->GetCityLightAtDirection(LocalDirection) > 0.25f;
+		// 2. Crater kinetic energy: each decade of yield pulverises more rock.
+		const float EnergyLog = FMath::Clamp(FMath::LogX(10.0f, FMath::Max(static_cast<float>(Impactor.Megatons()), 0.001f)), -3.0f, 9.0f);
+		const float Dust = (bOceanStrike || bIncendiary) ? 0.0f
+			: FMath::Clamp(0.45f + 0.24f * EnergyLog, 0.10f, 2.6f) * (bIce ? 0.3f : (bUrban ? 0.7f : 1.0f));
+		// 5. Thermal buoyancy: a bigger, hotter strike lofts its carbon higher, where
+		// it travels faster (3, wind shear) and stays longer (4, out of the rain).
+		PlumeLoft = FMath::Clamp(0.30f + 0.085f * EnergyLog + (bNuclear ? 0.15f : 0.0f), 0.08f, 1.0f) * ((bOceanStrike || bIce) ? 0.6f : 1.0f);
+		const float SootShare = bOceanStrike ? 0.15f : (bIce ? 0.10f : (bUrban ? 1.6f : 1.0f));
+		const float Steam = bOceanStrike ? 0.75f * PlumeScale : (bIce ? 0.6f * PlumeScale : 0.05f);
+		const float Soot = FMath::Min(Spec.Soot * 0.9f * PlumeScale * SootShare, 3.0f);
+		const float StampRadius = BlastAngle * 1.4f + 0.03f;
+		StampAsh(LocalDirection, StampRadius, Soot, FMath::Min(Spec.Fallout * 0.9f * PlumeScale, 3.0f));
+		StampVapour(LocalDirection, StampRadius, FMath::Min(Steam, 3.0f), FMath::Min(Dust, 3.0f), Soot * PlumeLoft);
+		UE_LOG(LogTemp, Display, TEXT("EARTHFALL_PLUME surface=%s megatons=%.3g soot=%.2f steam=%.2f dust=%.2f loft=%.2f"),
+			bOceanStrike ? TEXT("OCEAN") : (bIce ? TEXT("ICE") : (bUrban ? TEXT("URBAN") : TEXT("LAND"))),
+			Impactor.Megatons(), Soot, Steam, Dust, PlumeLoft);
+	}
 
 	// Crater height field for parallax occlusion: depth scales with crater size.
 	// A bunker-buster digs deep for its width.
@@ -929,6 +1012,17 @@ void AEarthfallPlanet::ApplyStrike(const FEarthfallStrike& Strike)
 			Column.bOcean = bOceanStrike;
 			Column.Strength = bOceanStrike ? Impactor.TsunamiStrength() : 0.5f;
 			Column.SunDirection = GetSunDirectionWorld();
+			// The column leans with the wind over ground zero, more the higher it was lofted.
+			{
+				const double Lat = FMath::Asin(FMath::Clamp(LocalDirection.Z, -1.0, 1.0));
+				const double Lon = FMath::Atan2(-LocalDirection.Y, LocalDirection.X);
+				const FVector2D Wind = EarthfallWind::Velocity(Lat, Lon, Population ? Population->GetWindTime() : 0.0);
+				FVector NorthAxis = (FVector::UpVector - LocalDirection * FVector::DotProduct(FVector::UpVector, LocalDirection)).GetSafeNormal();
+				if (NorthAxis.IsNearlyZero()) NorthAxis = FVector::ForwardVector;
+				const FVector EastAxis = FVector::CrossProduct(LocalDirection, NorthAxis);
+				Column.WindDirection = GetActorTransform().TransformVectorNoScale(EastAxis * Wind.X + NorthAxis * Wind.Y).GetSafeNormal();
+				Column.Loft = PlumeLoft;
+			}
 			Plume->InitPlume(Column);
 			Shocks[LastShockSlot].bColumn = true;
 			Shocks[LastShockSlot].bOceanColumn = bOceanStrike;

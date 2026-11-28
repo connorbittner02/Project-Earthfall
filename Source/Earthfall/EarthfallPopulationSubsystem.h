@@ -105,6 +105,8 @@ struct FEarthfallAshPlume
 	float RadiusRadians = 0.1f;
 	float Soot = 0.0f;
 	float Fallout = 0.0f;
+	/** 0..1: how high the carbon was lofted. High plumes travel faster and last longer. */
+	float Loft = 0.3f;
 };
 
 UCLASS()

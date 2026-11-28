@@ -42,6 +42,9 @@ public:
 
 	/** Bind the live simulation render targets to another material, such as the terrain decal. */
 	void BindSimulationTextures(UMaterialInstanceDynamic* Material) const;
+	/** Cloud Quality: High marches the deck in 6 steps, Ultra in 8. */
+	void SetCloudQualityUltra(bool bUltra) { bCloudUltra = bUltra; bCloudQualityDirty = true; }
+	bool IsCloudQualityUltra() const { return bCloudUltra; }
 	/** 512x256, one pixel per population cell: R growth, G tech tier, B grid health. */
 	UTexture2D* GetCityGrowthTexture() const { return CityGrowthTexture; }
 	/** 1 draws the surface, 0 dissolves it completely onto streamed terrain beneath. */
@@ -110,6 +113,8 @@ private:
 	UPROPERTY()
 	TObjectPtr<UMaterialInterface> AshAdvectionMaterial;
 	UPROPERTY()
+	TObjectPtr<UMaterialInterface> VapourAdvectionMaterial;
+	UPROPERTY()
 	TObjectPtr<UMaterialInterface> TsunamiStepMaterial;
 	UPROPERTY()
 	TObjectPtr<UMaterialInterface> FireStepMaterial;
@@ -118,6 +123,13 @@ private:
 	TObjectPtr<UTextureRenderTarget2D> ImpactMaskRT;
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UTextureRenderTarget2D>> AshPlumeRTs;
+	/** Ping-pong with the ash map: R steam and mist, G rock dust, B carbon x loft. */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTextureRenderTarget2D>> VapourRTs;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> VapourAdvectionMID;
+	bool bCloudUltra = false;
+	bool bCloudQualityDirty = true;
 	/** Ping-pong wave field: R height, G velocity, B coastal inundation. */
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UTextureRenderTarget2D>> TsunamiRTs;
@@ -260,6 +272,7 @@ private:
 		const FVector& Direction, float AngularRadius, const FLinearColor& Tint) const;
 	void RedrawImpactMask();
 	void StampAsh(const FVector& LocalDirection, float AngularRadius, float Soot, float Fallout);
+	void StampVapour(const FVector& LocalDirection, float AngularRadius, float Steam, float Dust, float LoftedSoot);
 	void AdvanceAsh(float StepSeconds);
 	void BindAshTexture();
 	void StartShock(const FVector& LocalDirection, float BlastAngle, const FEarthfallStrike& Strike, float& OutMaxRadius, float& OutSpeed);

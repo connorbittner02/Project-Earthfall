@@ -27,10 +27,16 @@ struct FEarthfallImpactFX
 };
 
 /**
- * One detonation's transient visuals: a white-hot fireball dome that cools through
- * orange to dull red, a rising cap, a shock ring that hugs the globe, and the
- * Niagara burst, smoke and spark systems. Lighting of the ground and cloud deck
- * comes from the planet's shock slots, not from a light component.
+ * One detonation's transient visuals. Thermal weapons (kinetic rod, mantle charge,
+ * thermonuclear) run a three-stage sequence:
+ *   1. 0 to 0.25 s: a double flash, a ground flash and a Wilson condensation dome;
+ *   2. 0.25 to 4 s: a black-body fireball cooling from 4000 K through 2200 K to
+ *      1100 K, turbulent, with a soot jacket closing over it as it cools;
+ *   3. from 2 s: the incandescent cap lifts into the mushroom, where AEarthfallPlume
+ *      builds the stem and the sheared anvil.
+ * The exotic weapons keep their own coloured fireball. All of them get the shock
+ * ring that hugs the globe. Lighting of the ground and cloud deck comes from the
+ * planet's shock slots, not from a light component.
  */
 UCLASS()
 class EARTHFALL_API AEarthImpactFeedback : public AActor
@@ -47,6 +53,11 @@ private:
 	TObjectPtr<UStaticMeshComponent> Fireball;
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<UStaticMeshComponent> RisingCap;
+	/** Stage 1: the Wilson condensation dome and the flash on the ground. */
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<UStaticMeshComponent> WilsonDome;
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<UStaticMeshComponent> GroundFlash;
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<UProceduralMeshComponent> ShockRing;
 	UPROPERTY(VisibleAnywhere)
@@ -66,6 +77,14 @@ private:
 	TObjectPtr<UMaterialInterface> GlowMaterial;
 	UPROPERTY()
 	TObjectPtr<UMaterialInterface> RingMaterial;
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> FireballMaterial;
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> WilsonMaterial;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> WilsonMID;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> FlashMID;
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> FireballMID;
 	UPROPERTY(Transient)
@@ -81,6 +100,8 @@ private:
 	float FireballRadius = 4.0f;
 	bool bNuclear = false;
 	bool bImplosion = false;
+	/** Kinetic, mantle and thermonuclear strikes: the three-stage black-body detonation. */
+	bool bThermal = false;
 	bool bInitialised = false;
 
 	/** Opt-in for the stock Niagara template copies under Content/Earthfall/FX. */
@@ -89,5 +110,6 @@ private:
 
 	void BuildRingTopology();
 	void UpdateFireball();
+	void UpdateDetonation();
 	void UpdateShockRing();
 };

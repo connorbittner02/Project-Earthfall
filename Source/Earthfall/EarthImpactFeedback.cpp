@@ -20,6 +20,8 @@ constexpr float FeedbackSphereRadius = 50.0f;
 constexpr float RingAltitudeScale = 1.024f;
 /** Effects draw after the planet's cloud and atmosphere shells (priorities 10-12). */
 constexpr int32 FeedbackSortPriority = 20;
+/** How long the black-body fireball and its soot ball last before the plume has taken over. */
+constexpr float ThermalSeconds = 4.8f;
 }
 
 AEarthImpactFeedback::AEarthImpactFeedback()
@@ -33,6 +35,10 @@ AEarthImpactFeedback::AEarthImpactFeedback()
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Ring(TEXT("/Game/Earthfall/Materials/M_FXRing.M_FXRing"));
 	GlowMaterial = Glow.Succeeded() ? Glow.Object : nullptr;
 	RingMaterial = Ring.Succeeded() ? Ring.Object : nullptr;
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> FireballFinder(TEXT("/Game/Earthfall/Materials/M_FXFireball.M_FXFireball"));
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> WilsonFinder(TEXT("/Game/Earthfall/Materials/M_FXWilson.M_FXWilson"));
+	FireballMaterial = FireballFinder.Succeeded() ? FireballFinder.Object : nullptr;
+	WilsonMaterial = WilsonFinder.Succeeded() ? WilsonFinder.Object : nullptr;
 
 	auto MakeGlowSphere = [this, Scene](const TCHAR* Name)
 	{
@@ -49,6 +55,8 @@ AEarthImpactFeedback::AEarthImpactFeedback()
 	};
 	Fireball = MakeGlowSphere(TEXT("Fireball"));
 	RisingCap = MakeGlowSphere(TEXT("RisingCap"));
+	WilsonDome = MakeGlowSphere(TEXT("WilsonDome"));
+	GroundFlash = MakeGlowSphere(TEXT("GroundFlash"));
 
 	ShockRing = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("ShockRing"));
 	ShockRing->SetupAttachment(Scene);
@@ -92,6 +100,7 @@ void AEarthImpactFeedback::InitFeedback(const FEarthfallImpactFX& InParams)
 	Accent = EarthfallWeapons::Get(Params.WeaponIndex).Color;
 	bNuclear = Params.WeaponIndex == EarthfallWeapons::Nuclear;
 	bImplosion = Params.WeaponIndex == 3;
+	bThermal = FireballMaterial != nullptr && (Params.WeaponIndex == 0 || Params.WeaponIndex == 2 || bNuclear);
 	Age = 0.0f;
 
 	static const float FireballDurations[] = {1.1f, 1.3f, 2.4f, 1.8f, 1.5f, 5.5f};
@@ -100,9 +109,34 @@ void AEarthImpactFeedback::InitFeedback(const FEarthfallImpactFX& InParams)
 	FireballRadius = FMath::Min(Params.BlastRadius * (bNuclear ? 0.42f : 0.40f), Params.PlanetRadius * 0.45f);
 	const float ShockSeconds = Params.ShockSpeed > KINDA_SMALL_NUMBER ? Params.ShockMaxRadius / Params.ShockSpeed : 0.0f;
 	Lifetime = FMath::Max(FireballSeconds * (bNuclear ? 1.4f : 1.15f), ShockSeconds) + 0.25f;
+	if (bThermal) Lifetime = FMath::Max(Lifetime, ThermalSeconds + 0.3f);
 	SetLifeSpan(Lifetime + 0.5f);
 
-	if (GlowMaterial)
+	if (bThermal)
+	{
+		// Heat = (kelvin, brightness, soot, seed); Shape = (noise scale, turbulence, churn, edge exponent), as in fireball.hlsl.
+		const float Seed = FMath::FRandRange(0.0f, 40.0f);
+		FireballMID = UMaterialInstanceDynamic::Create(FireballMaterial, this);
+		FireballMID->SetVectorParameterValue(TEXT("Heat"), FLinearColor(6500.0f, 12.0f, 0.0f, Seed));
+		CapMID = UMaterialInstanceDynamic::Create(FireballMaterial, this);
+		CapMID->SetVectorParameterValue(TEXT("Heat"), FLinearColor(2600.0f, 0.0f, 0.0f, Seed + 13.0f));
+		Fireball->SetMaterial(0, FireballMID);
+		RisingCap->SetMaterial(0, CapMID);
+		Fireball->SetVisibility(true);
+		RisingCap->SetVisibility(false);
+		if (WilsonMaterial)
+		{
+			WilsonMID = UMaterialInstanceDynamic::Create(WilsonMaterial, this);
+			WilsonDome->SetMaterial(0, WilsonMID);
+		}
+		if (GlowMaterial)
+		{
+			FlashMID = UMaterialInstanceDynamic::Create(GlowMaterial, this);
+			FlashMID->SetVectorParameterValue(TEXT("Shape"), FLinearColor(1.6f, 1.5f, 2.0f, 0.0f));
+			GroundFlash->SetMaterial(0, FlashMID);
+		}
+	}
+	else if (GlowMaterial)
 	{
 		FireballMID = UMaterialInstanceDynamic::Create(GlowMaterial, this);
 		FireballMID->SetVectorParameterValue(TEXT("Shape"), FLinearColor(2.2f, 0.30f, 3.2f, 1.0f));
@@ -168,8 +202,91 @@ void AEarthImpactFeedback::Tick(float DeltaSeconds)
 	UpdateShockRing();
 }
 
+void AEarthImpactFeedback::UpdateDetonation()
+{
+	const FVector GroundZero = Params.PlanetCenter + Params.Normal * Params.PlanetRadius;
+	const float YieldGain = FMath::Pow(FMath::Max(Params.YieldMultiplier, 0.01f), 0.15f) * (bNuclear ? 1.35f : 1.0f);
+	const float T = Age;
+
+	// --- Stage 1, 0 to 0.25 s. A bomb flashes twice: the first spike is the bare
+	// fireball, which the shock front then hides for a moment before it thins
+	// and the second, longer maximum shines through.
+	const float Flash = 5.0f * FMath::Exp(-T / 0.022f) + 3.2f * FMath::Exp(-FMath::Square((T - 0.135f) / 0.050f));
+	if (FlashMID)
+	{
+		// The flash on the ground: a wide, flat sheet of light that is gone in a third of a second.
+		const float Ground = (1.6f * FMath::Exp(-T / 0.07f) + 0.25f * Flash) * YieldGain;
+		GroundFlash->SetVisibility(T < 0.45f);
+		GroundFlash->SetRelativeLocation(FVector(0.0f, 0.0f, FireballRadius * 0.10f));
+		GroundFlash->SetRelativeScale3D(FVector(FireballRadius * 2.7f, FireballRadius * 2.7f, FireballRadius * 0.42f) / FeedbackSphereRadius);
+		FlashMID->SetVectorParameterValue(TEXT("Tint"), FLinearColor(1.0f, 0.96f, 0.88f, Ground));
+	}
+	if (WilsonMID)
+	{
+		// The Wilson dome: fog condensing in the low pressure behind the shock,
+		// a crisp shell that races outward, tears and is gone within a second.
+		const float Grow = 1.0f - FMath::Exp(-T * 3.4f);
+		const float Radius = FireballRadius * (0.55f + 2.3f * Grow);
+		const float Shown = FMath::SmoothStep(0.03f, 0.09f, T) * (1.0f - FMath::SmoothStep(0.40f, 1.05f, T));
+		WilsonDome->SetVisibility(Shown > 0.002f);
+		WilsonDome->SetRelativeLocation(FVector::ZeroVector);
+		WilsonDome->SetRelativeScale3D(FVector(Radius, Radius, Radius * 0.80f) / FeedbackSphereRadius);
+		WilsonMID->SetVectorParameterValue(TEXT("Tint"), FLinearColor(0.86f, 0.93f, 1.0f, 1.1f * Shown * YieldGain));
+		// Shape = (limb sharpness, tearing, noise scale, unused), as in fx.hlsl.
+		WilsonMID->SetVectorParameterValue(TEXT("Shape"), FLinearColor(2.6f, FMath::SmoothStep(0.22f, 0.95f, T), 3.4f, 0.0f));
+	}
+
+	// --- Stage 2, 0.25 to 4 s. The fireball is a black body. Its core cools from
+	// 4000 K (white-yellow) through 2200 K (orange) to 1100 K (deep red), and the
+	// soot jacket closes over it as it does.
+	float Kelvin = 6500.0f;
+	if (T >= 0.25f)
+	{
+		Kelvin = T < 1.5f ? FMath::Lerp(4000.0f, 2200.0f, (T - 0.25f) / 1.25f)
+			: FMath::Lerp(2200.0f, 1100.0f, FMath::Clamp((T - 1.5f) / 2.5f, 0.0f, 1.0f));
+	}
+	const float Soot = FMath::SmoothStep(0.9f, 3.4f, T);
+	const float Brightness = (T < 0.25f ? 2.2f + Flash : FMath::Lerp(4.2f, 2.2f, FMath::Clamp((T - 0.25f) / 3.75f, 0.0f, 1.0f))) * YieldGain;
+	const float Swell = 0.30f + 0.70f * (1.0f - FMath::Exp(-T * 7.0f));
+	const float Rise = FMath::Clamp(T / ThermalSeconds, 0.0f, 1.0f);
+	// Past 4 s the soot ball thins from its rim inward and hands over to the plume.
+	const float Thin = FMath::SmoothStep(4.0f, ThermalSeconds, T);
+	const float Radius = FireballRadius * Swell * (1.0f + 0.30f * Rise);
+	Fireball->SetVisibility(Thin < 0.995f);
+	Fireball->SetWorldLocation(GroundZero + Params.Normal * FireballRadius * (0.15f + 0.55f * Rise * Rise));
+	Fireball->SetWorldScale3D(FVector(FMath::Max(Radius, 0.01f) / FeedbackSphereRadius));
+	if (FireballMID)
+	{
+		const float Seed = FireballMID->K2_GetVectorParameterValue(TEXT("Heat")).A;
+		FireballMID->SetVectorParameterValue(TEXT("Heat"), FLinearColor(Kelvin, Brightness, Soot, Seed));
+		// Turbulence comes in as the surface breaks up; the churn slows as it cools.
+		FireballMID->SetVectorParameterValue(TEXT("Shape"), FLinearColor(2.6f, FMath::SmoothStep(0.10f, 0.9f, T), 0.75f - 0.4f * Rise, 1.2f + 7.0f * Thin));
+	}
+
+	// --- Stage 3, from 2 s. The hottest gas lifts off as the mushroom's cap: a
+	// second, cooler black body that climbs, rolls and soots over while the plume
+	// actor raises the stem beneath it and spreads the anvil above.
+	const float CapAge = T - 1.6f;
+	RisingCap->SetVisibility(CapAge > 0.0f && Thin < 0.995f);
+	if (CapMID && CapAge > 0.0f)
+	{
+		const float U = FMath::Clamp(CapAge / (ThermalSeconds - 1.6f), 0.0f, 1.0f);
+		const float CapRadius = FireballRadius * FMath::Lerp(0.55f, 1.05f, U);
+		RisingCap->SetWorldLocation(GroundZero + Params.Normal * FireballRadius * FMath::Lerp(0.6f, 2.0f, FMath::Sqrt(U)));
+		RisingCap->SetWorldScale3D(FVector(CapRadius, CapRadius, CapRadius * 0.72f) / FeedbackSphereRadius);
+		const float Seed = CapMID->K2_GetVectorParameterValue(TEXT("Heat")).A;
+		CapMID->SetVectorParameterValue(TEXT("Heat"), FLinearColor(FMath::Lerp(2500.0f, 1050.0f, U), 3.5f * YieldGain * FMath::SmoothStep(0.0f, 0.25f, CapAge), FMath::SmoothStep(0.15f, 0.85f, U), Seed));
+		CapMID->SetVectorParameterValue(TEXT("Shape"), FLinearColor(3.4f, 1.0f, 0.55f, 1.1f + 7.0f * Thin));
+	}
+}
+
 void AEarthImpactFeedback::UpdateFireball()
 {
+	if (bThermal)
+	{
+		UpdateDetonation();
+		return;
+	}
 	const FVector GroundZero = Params.PlanetCenter + Params.Normal * Params.PlanetRadius;
 	const float YieldGain = FMath::Pow(FMath::Max(Params.YieldMultiplier, 0.01f), 0.15f);
 

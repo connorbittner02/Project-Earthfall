@@ -62,6 +62,12 @@ AEarthfallPlume::AEarthfallPlume()
 	Cap = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Cap"));
 	Cap->SetStaticMesh(SphereMesh);
 	Configure(Cap, PlumeSortPriority);
+	Anvil = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Anvil"));
+	Anvil->SetStaticMesh(SphereMesh);
+	Configure(Anvil, PlumeSortPriority);
+	AnvilVeil = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("AnvilVeil"));
+	AnvilVeil->SetStaticMesh(SphereMesh);
+	Configure(AnvilVeil, PlumeSortPriority);
 	EmberGlow = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("EmberGlow"));
 	EmberGlow->SetStaticMesh(SphereMesh);
 	Configure(EmberGlow, PlumeSortPriority - 1);
@@ -117,6 +123,11 @@ void AEarthfallPlume::InitPlume(const FEarthfallPlumeParams& InParams)
 	CapMID = MakeMID(VolumeMaterial, FLinearColor(1.5f, 0.9f, 3.0f, 0.10f));
 	Cap->SetMaterial(0, CapMID);
 	Cap->SetVisibility(true);
+	// Two anvil layers with different noise: a dense deck and a thinner, wider veil above it.
+	AnvilMID = MakeMID(VolumeMaterial, FLinearColor(1.2f, 1.15f, 4.6f, 0.06f));
+	Anvil->SetMaterial(0, AnvilMID);
+	AnvilVeilMID = MakeMID(VolumeMaterial, FLinearColor(1.0f, 1.5f, 7.0f, 0.04f));
+	AnvilVeil->SetMaterial(0, AnvilVeilMID);
 
 	if (!Params.bOcean && GlowMaterial)
 	{
@@ -175,6 +186,19 @@ void AEarthfallPlume::UpdateShape()
 		return FLinearColor(Colour.R * Day, Colour.G * Day, Colour.B * Day, Opacity);
 	};
 
+	// Wind shear. The wind grows with altitude, so the stem leans and the top is
+	// carried off downwind: the offset goes with the square of height and keeps
+	// growing for as long as the column stands.
+	FVector WindLocal = GetActorTransform().InverseTransformVectorNoScale(Params.WindDirection);
+	WindLocal.Z = 0.0;
+	WindLocal = WindLocal.GetSafeNormal();
+	const float TopHeight = FMath::Max((Params.bOcean ? SteamTop : AshTop) * Radius, 0.05f);
+	const float Drift = Girth * (0.5f + 2.6f * Params.Loft) * FMath::SmoothStep(1.5f, RiseSeconds * 3.5f, Age);
+	auto Shear = [&WindLocal, Drift, TopHeight](float Altitude)
+	{
+		return WindLocal * (Drift * FMath::Square(FMath::Clamp(Altitude / TopHeight, 0.0f, 1.3f)));
+	};
+
 	// --- Stem: a stack of overlapping puffs, fatter toward the top, wandering a
 	// little off the axis so the column never reads as a cylinder.
 	int32 Slot = 0;
@@ -183,7 +207,7 @@ void AEarthfallPlume::UpdateShape()
 		const float Along = (Index + 0.5f) / StemPuffs;
 		const FVector& Offset = Jitter[Slot];
 		const float Wide = FMath::Min(Girth * (1.05f + 0.55f * Offset.Z) * (0.80f + 0.45f * Along), Height * 0.75f + 0.25f);
-		const FVector Location(Offset.X * Girth * 0.38f, Offset.Y * Girth * 0.38f, Along * Height);
+		const FVector Location = FVector(Offset.X * Girth * 0.38f, Offset.Y * Girth * 0.38f, Along * Height) + Shear(Along * Height);
 		ColumnTransforms[Slot] = Puff(Spin[Slot], Location, Wide, Wide * 1.20f);
 	}
 
@@ -204,15 +228,36 @@ void AEarthfallPlume::UpdateShape()
 	const float Spread = FMath::Clamp(Age / (RiseSeconds * 4.0f), 0.0f, 1.0f);
 	const float CapRadius = Girth * (1.4f + 2.6f * Rise + 2.2f * Spread);
 	const float CapThickness = Girth * (0.9f + 0.7f * Rise);
-	Cap->SetRelativeLocation(FVector(0.0f, 0.0f, Height));
+	const FVector CapShear = Shear(Height);
+	Cap->SetRelativeLocation(FVector(0.0f, 0.0f, Height) + CapShear);
+
+	// --- Anvil: once the column tops out it can rise no further and spreads flat,
+	// long in the wind and thin. The veil above it runs further and faster still.
+	const float AnvilGrow = FMath::SmoothStep(0.55f, 1.0f, Rise) * (0.35f + 0.65f * Spread);
+	const float AnvilRadius = CapRadius * (1.1f + (0.9f + 1.4f * Params.Loft) * Spread);
+	const FQuat AlongWind = WindLocal.IsNearlyZero() ? FQuat::Identity : WindLocal.ToOrientationQuat();
+	const float Stretch = 1.0f + (0.5f + 1.3f * Params.Loft) * Spread;
+	Anvil->SetVisibility(!Params.bOcean && AnvilGrow > 0.01f);
+	AnvilVeil->SetVisibility(!Params.bOcean && AnvilGrow > 0.01f);
+	if (!Params.bOcean && AnvilGrow > 0.01f)
+	{
+		Anvil->SetRelativeRotation(AlongWind);
+		Anvil->SetRelativeLocation(FVector(0.0f, 0.0f, Height + CapThickness * 0.30f) + CapShear * 1.6f + WindLocal * AnvilRadius * 0.35f * Spread);
+		Anvil->SetRelativeScale3D(FVector(AnvilRadius * Stretch, AnvilRadius, CapThickness * 0.42f) * AnvilGrow / PlumeShapeHalfExtent);
+		AnvilVeil->SetRelativeRotation(AlongWind);
+		AnvilVeil->SetRelativeLocation(FVector(0.0f, 0.0f, Height + CapThickness * 0.62f) + CapShear * 2.3f + WindLocal * AnvilRadius * 0.9f * Spread);
+		AnvilVeil->SetRelativeScale3D(FVector(AnvilRadius * Stretch * 1.45f, AnvilRadius * 1.15f, CapThickness * 0.22f) * AnvilGrow / PlumeShapeHalfExtent);
+		if (AnvilMID) AnvilMID->SetVectorParameterValue(TEXT("Tint"), Tint(FLinearColor(Body.R * 1.25f, Body.G * 1.25f, Body.B * 1.3f), 0.92f * Fade));
+		if (AnvilVeilMID) AnvilVeilMID->SetVectorParameterValue(TEXT("Tint"), Tint(FLinearColor(Body.R * 1.7f, Body.G * 1.7f, Body.B * 1.8f), 0.55f * Fade));
+	}
 	Cap->SetRelativeScale3D(FVector(CapRadius, CapRadius, CapThickness) / PlumeShapeHalfExtent);
 	if (CapMID) CapMID->SetVectorParameterValue(TEXT("Tint"), Tint(Body, 1.0f * Fade));
 	for (int32 Index = 0; Index < CapLobes; ++Index, ++Slot)
 	{
 		const float Angle = 2.0f * PI * (Index + 0.35f * Jitter[Slot].X) / CapLobes;
 		const float Wide = CapRadius * (0.42f + 0.16f * Jitter[Slot].Z);
-		const FVector Location(FMath::Cos(Angle) * CapRadius * 0.62f, FMath::Sin(Angle) * CapRadius * 0.62f,
-			Height - CapThickness * (0.10f + 0.30f * Jitter[Slot].Z));
+		const FVector Location = FVector(FMath::Cos(Angle) * CapRadius * 0.62f, FMath::Sin(Angle) * CapRadius * 0.62f,
+			Height - CapThickness * (0.10f + 0.30f * Jitter[Slot].Z)) + CapShear;
 		ColumnTransforms[Slot] = Puff(Spin[Slot], Location, Wide, CapThickness * 0.85f);
 	}
 	Column->BatchUpdateInstancesTransforms(0, ColumnTransforms, false, true, false);
@@ -222,7 +267,7 @@ void AEarthfallPlume::UpdateShape()
 	{
 		// Embers under the cap: bright while the column is young, a dull red after.
 		const float Heat = (0.25f + 0.75f * FMath::Exp(-Age / 14.0f)) * Fade;
-		EmberGlow->SetRelativeLocation(FVector(0.0f, 0.0f, FMath::Max(Height - CapThickness * 0.75f, Height * 0.5f)));
+		EmberGlow->SetRelativeLocation(FVector(0.0f, 0.0f, FMath::Max(Height - CapThickness * 0.75f, Height * 0.5f)) + CapShear * 0.8f);
 		EmberGlow->SetRelativeScale3D(FVector(Girth * 1.15f, Girth * 1.15f, CapThickness * 0.9f) / PlumeShapeHalfExtent);
 		GlowMID->SetVectorParameterValue(TEXT("Tint"), FLinearColor(1.0f, 0.42f, 0.08f, 0.30f * Heat * Day));
 	}

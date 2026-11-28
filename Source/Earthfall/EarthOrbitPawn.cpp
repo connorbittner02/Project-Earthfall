@@ -210,6 +210,7 @@ void AEarthOrbitPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 	PlayerInputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &AEarthOrbitPawn::CycleTab);
 	PlayerInputComponent->BindKey(EKeys::M, IE_Pressed, this, &AEarthOrbitPawn::ToggleInspectMode);
 	PlayerInputComponent->BindKey(EKeys::F, IE_Pressed, this, &AEarthOrbitPawn::CycleMunition);
+	PlayerInputComponent->BindKey(EKeys::K, IE_Pressed, this, &AEarthOrbitPawn::ToggleCloudQuality);
 	PlayerInputComponent->BindKey(EKeys::MiddleMouseButton, IE_Pressed, this, &AEarthOrbitPawn::ToggleInspectMode);
 }
 
@@ -619,4 +620,15 @@ void AEarthOrbitPawn::UpdateTargetPreviewRing()
 	const FLinearColor Tone = EarthfallWeapons::Get(WeaponIndex).Color;
 	const float Ready = CooldownRemaining > 0.0f ? 0.9f : 2.4f;
 	PreviewMID->SetVectorParameterValue(TEXT("Tint"), FLinearColor(Tone.R, Tone.G, Tone.B, Ready));
+}
+
+void AEarthOrbitPawn::ToggleCloudQuality()
+{
+	AEarthfallPlanet* Planet = FindPlanet();
+	if (!Planet) return;
+	Planet->SetCloudQualityUltra(!Planet->IsCloudQualityUltra());
+	if (UEarthfallPopulationSubsystem* Population = GetWorld()->GetSubsystem<UEarthfallPopulationSubsystem>())
+	{
+		Population->PostDispatch(FString::Printf(TEXT("[SETTINGS] CLOUD QUALITY %s"), Planet->IsCloudQualityUltra() ? TEXT("ULTRA  //  8-STEP VOLUME") : TEXT("HIGH  //  6-STEP VOLUME")), 2);
+	}
 }

@@ -22,6 +22,10 @@ struct FEarthfallPlumeParams
 	float Strength = 0.5f;
 	/** World-space unit vector toward the Sun. */
 	FVector SunDirection = FVector::ForwardVector;
+	/** World-space wind over ground zero; the column shears along it with altitude. */
+	FVector WindDirection = FVector::ZeroVector;
+	/** 0..1 thermal buoyancy: how far the anvil spreads and how hard the top is sheared. */
+	float Loft = 0.4f;
 };
 
 /**
@@ -96,6 +100,15 @@ private:
 	TObjectPtr<UMaterialInstanceDynamic> ColumnMID;
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> CapMID;
+	/** The anvil: the flat top that spreads at the tropopause and streams downwind. */
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<UStaticMeshComponent> Anvil;
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<UStaticMeshComponent> AnvilVeil;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> AnvilMID;
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> AnvilVeilMID;
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> GlowMID;
 	UPROPERTY(Transient)

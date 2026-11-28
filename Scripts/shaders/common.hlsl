@@ -130,7 +130,12 @@ float ColumnShadow(float3 n, float3 Sun, float4 A, float4 C)
 // stretch, drift rad/s). Shared by the cloud shells and the surface cloud shadow
 // so shadows line up with the clouds that cast them.
 // ---------------------------------------------------------------------------
-float CloudField(float3 n, float time, float4 layer, int octaves)
+// The weather is a noise field looked up in a warped domain. CloudDomain does the
+// expensive, smooth part (drift, six cyclone twists, a slow vector warp) and
+// returns the lookup position; CloudDensity turns a position into density. The
+// raymarched deck calls CloudDomain three times to get the domain and how it
+// changes east and north, then takes all of its march samples from that plane.
+float3 CloudDomain(float3 n, float time, float4 layer, out float sinLat)
 {
     // Differential zonal drift: the tropics outrun the mid-latitudes.
     float drift = time * layer.w * (0.6 + 0.4 * cos(n.z * 2.6));
@@ -144,10 +149,10 @@ float CloudField(float3 n, float time, float4 layer, int octaves)
     {
         float3 h = Hash33(float3(i * 7.31 + layer.x, 3.7, 9.1));
         float hemisphere = (i % 2 == 0) ? 1.0 : -1.0;
-        float sinLat = (0.32 + 0.46 * h.x) * hemisphere;
+        float sinCentre = (0.32 + 0.46 * h.x) * hemisphere;
         float lon = h.y * 6.2831853;
-        float cosLat = sqrt(1.0 - sinLat * sinLat);
-        float3 centre = float3(cosLat * cos(lon), cosLat * sin(lon), sinLat);
+        float cosCentre = sqrt(1.0 - sinCentre * sinCentre);
+        float3 centre = float3(cosCentre * cos(lon), cosCentre * sin(lon), sinCentre);
         float chord2 = max(2.0 - 2.0 * dot(n, centre), 0.0);
         float radius = 0.15 + 0.13 * h.z;
         float twist = hemisphere * 1.9 * exp(-chord2 / (radius * radius));
@@ -156,7 +161,12 @@ float CloudField(float3 n, float time, float4 layer, int octaves)
 
     float3 q = n * 1.8 + layer.x;
     float3 warp = float3(VNoise(q + float3(0.0, time * 0.004, 0.0)), VNoise(q + 31.7), VNoise(q + 71.3)) - 0.5;
-    float3 p = float3(n.xy * 4.3, n.z * 4.3 * layer.z) + warp * 1.15 + layer.x * 1.7;
+    sinLat = abs(n.z);
+    return float3(n.xy * 4.3, n.z * 4.3 * layer.z) + warp * 1.15 + layer.x * 1.7;
+}
+
+float CloudDensity(float3 p, float sinLat, float4 layer, int octaves)
+{
     float f = Fbm(p, octaves);
     // Fine erosion breaks solid decks into cells and streets.
     // Shadow and self-shadow lookups ask for 4 octaves and are blurred anyway,
@@ -167,11 +177,43 @@ float CloudField(float3 n, float time, float4 layer, int octaves)
     }
 
     // Climate bands: wet ITCZ, dry subtropical highs, stormy mid-latitudes.
-    float sl = abs(n.z);
-    float climate = 0.070 * exp(-sl * sl / 0.012)
-                  - 0.075 * exp(-Pow2(sl - 0.42) / 0.020)
-                  + 0.060 * exp(-Pow2(sl - 0.78) / 0.030);
+    float climate = 0.070 * exp(-sinLat * sinLat / 0.012)
+                  - 0.075 * exp(-Pow2(sinLat - 0.42) / 0.020)
+                  + 0.060 * exp(-Pow2(sinLat - 0.78) / 0.030);
     return smoothstep(layer.y, layer.y + 0.15, f + climate);
+}
+
+float CloudField(float3 n, float time, float4 layer, int octaves)
+{
+    float sinLat;
+    float3 p = CloudDomain(n, time, layer, sinLat);
+    return CloudDensity(p, sinLat, layer, octaves);
+}
+
+// Henyey-Greenstein phase function times 4 pi, so isotropic scattering is 1.
+float PhaseHG(float cosTheta, float g)
+{
+    float g2 = g * g;
+    return (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * cosTheta, 1e-3), 1.5);
+}
+
+// Colour of a black body at a temperature in kelvin, 800 K to 7000 K, with its
+// peak channel at 1. A fit to the Planckian locus: red saturates first, green
+// climbs through the oranges, and blue only joins above about 2000 K.
+float3 BlackbodyColour(float kelvin)
+{
+    float t = clamp(kelvin, 800.0, 7000.0) / 100.0;
+    float g = saturate((99.4708 * log(t) - 161.1196) / 255.0);
+    float b = t <= 19.0 ? 0.0 : saturate((138.5177 * log(t - 10.0) - 305.0448) / 255.0);
+    // Below about 1000 K the glow is a dull red that fades to nothing by 800 K.
+    return float3(1.0, g, b) * smoothstep(780.0, 1100.0, kelvin);
+}
+
+// Radiance of that black body relative to one at 4000 K: the fourth-power law,
+// softened so a cooling fireball dims over seconds rather than vanishing.
+float BlackbodyPower(float kelvin)
+{
+    return pow(saturate(kelvin / 4000.0), 3.2);
 }
 
 // --- Tri-planar lookups on the planet ------------------------------------------

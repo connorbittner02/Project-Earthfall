@@ -118,8 +118,62 @@ void AEarthfallCaptureDirector::BuildScript()
 		At(Start + 148.2f, [=, this]() { Tilt(-1.0f); if (AEarthOrbitPawn* P = Pawn()) { P->SelectMunition(EarthfallMunitions::Standard); P->SetMultiplierIndex(EEarthfallMultiplier::BlastRadius, EarthfallMultipliers::DefaultIndex); P->ResetSimulation(); } });
 		return Start + 148.6f;
 	};
+	// Clouds as a volume, the three stages of a detonation, and what different
+	// ground puts into the air.
+	auto FxShots = [=, this](float Start)
+	{
+		auto Quality = [this](bool bUltra) { for (TActorIterator<AEarthfallPlanet> It(GetWorld()); It; ++It) It->SetCloudQualityUltra(bUltra); };
+		At(Start + 0.0f, [=, this]() { if (AEarthOrbitPawn* P = Pawn()) { P->SetHudMode(EEarthfallHudMode::Hidden); P->SetAimEnabled(false); } View(-38.0f, 12.0f, 250.0f); });
+		At(Start + 3.0f, [this]() { Shot(TEXT("75-volumetric-clouds-day")); });
+		// Toward the terminator, where the sun is low and every tower throws a shadow.
+		At(Start + 3.1f, [=]() { View(18.0f, 18.0f, 170.0f); });
+		At(Start + 6.0f, [this]() { Shot(TEXT("76-clouds-terminator-relief")); });
+		// Skimming the deck in low orbit, looking along it: parallax and silver lining.
+		At(Start + 6.1f, [=]() { View(-30.0f, 4.0f, 104.6f); });
+		At(Start + 10.0f, [this]() { Shot(TEXT("77-clouds-low-orbit-high")); });
+		At(Start + 10.1f, [=]() { Quality(true); });
+		At(Start + 12.0f, [this]() { Shot(TEXT("77b-clouds-low-orbit-ultra")); });
+		At(Start + 12.1f, [=]() { Quality(false); });
+
+		// A thermonuclear strike on open country, in daylight, caught through its stages.
+		At(Start + 12.2f, [=]() { View(-58.0f, -14.0f, 330.0f); Weapon(EarthfallWeapons::Nuclear, EarthfallMultipliers::DefaultIndex); });
+		At(Start + 14.0f, [=]() { Fire(-11.0, -55.0); });
+		// The first quarter of a second holds a double flash, a ground flash and the
+		// Wilson dome, so time runs at a tenth of its speed around the impact and a
+		// frame is taken every twentieth of a second of it.
+		At(Start + 15.90f, [this]() { GetWorldSettings()->SetTimeDilation(0.1f); });
+		for (int32 Burst = 0; Burst < 20; ++Burst)
+		{
+			At(Start + 15.95f + 0.05f * Burst, [this, Burst]() { Shot(*FString::Printf(TEXT("78-stage1-%02d"), Burst)); });
+		}
+		At(Start + 16.97f, [this]() { GetWorldSettings()->SetTimeDilation(1.0f); });
+		At(Start + 17.6f, [this]() { Shot(TEXT("78d-blackbody-fireball-orange")); });
+		At(Start + 19.0f, [this]() { Shot(TEXT("78e-blackbody-soot-jacket")); });
+		// Side on, with ground zero near the limb: the stem, the cap and the anvil in profile.
+		At(Start + 19.2f, [=]() { View(-130.0f, -14.0f, 330.0f); });
+		At(Start + 21.0f, [this]() { Shot(TEXT("78f-mushroom-rising")); });
+		At(Start + 32.0f, [this]() { Shot(TEXT("78g-mushroom-sheared-anvil")); });
+		At(Start + 44.0f, [this]() { Shot(TEXT("78h-anvil-downwind")); });
+
+		// Three kinetic rods at 10x yield: open sea, a city, and forest. Steam, soot, and carbon with dust.
+		At(Start + 44.2f, [=, this]() { if (AEarthOrbitPawn* P = Pawn()) P->ResetSimulation(); View(-66.0f, 36.0f, 300.0f); Weapon(0, 5); });
+		At(Start + 45.0f, [=]() { Fire(31.0, -52.0); });
+		At(Start + 45.4f, [=]() { Fire(40.7, -74.0); });
+		At(Start + 45.8f, [=]() { Fire(50.0, -92.0); });
+		At(Start + 66.0f, [this]() { Shot(TEXT("79-plume-composition-steam-soot-dust")); });
+		At(Start + 94.0f, [this]() { Shot(TEXT("80-plume-shear-and-rainout")); });
+		At(Start + 94.2f, [=, this]() { if (AEarthOrbitPawn* P = Pawn()) { Weapon(0, EarthfallMultipliers::DefaultIndex); P->ResetSimulation(); } });
+		return Start + 94.6f;
+	};
 	FString CaptureSet;
 	FParse::Value(FCommandLine::Get(), TEXT("EarthfallCaptureSet="), CaptureSet);
+	if (CaptureSet == TEXT("fx"))
+	{
+		const float End = FxShots(0.0f);
+		At(End, [this]() { Finish(); });
+		Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
+		return;
+	}
 	if (CaptureSet == TEXT("city"))
 	{
 		// -EarthfallCaptureSet=city runs only these, for quick iteration on the low-altitude look.
@@ -572,7 +626,8 @@ void AEarthfallCaptureDirector::BuildScript()
 	At(266.2f, [this]() { Shot(TEXT("68-tech-tiers-at-night-clean")); });
 	TimeOffset = 0.0f;
 	const float CityEnd = CityShots(50.2f + 11.2f + 266.8f);
-	At(CityEnd, [this]() { Finish(); });
+	const float FxEnd = FxShots(CityEnd);
+	At(FxEnd, [this]() { Finish(); });
 
 	Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
 }

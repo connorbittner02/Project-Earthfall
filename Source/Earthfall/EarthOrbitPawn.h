@@ -68,6 +68,8 @@ public:
 	int32 GetMunition() const { return MunitionIndex; }
 	void SelectMunition(int32 Index);
 	void CycleMunition() { SelectMunition((MunitionIndex + 1) % EarthfallMunitions::Count); }
+	/** K: Cloud Quality, High (6 march steps) or Ultra (8). */
+	void ToggleCloudQuality();
 	void AdjustMultiplier(EEarthfallMultiplier Kind, int32 Delta);
 	void SetMultiplierIndex(EEarthfallMultiplier Kind, int32 Index);
 	void ResetSimulation();

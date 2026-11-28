@@ -340,10 +340,13 @@ def build_clouds(black):
         ("UV", node(material, unreal.MaterialExpressionTextureCoordinate, -900, -500), ""),
         ("Mask", texture_sample(material, "ImpactMaskRT", black, color, -400), "RGB"),
         ("AshTex", texture_object(material, "AshPlumeRT", black, -200), ""),
+        ("VapourTex", texture_object(material, "VapourRT", black, -100), ""),
         ("Sun", vector_parameter(material, "SunDirection", (1.0, 0.0, 0.0, 0.0), 0), "RGB"),
         ("Time", node(material, unreal.MaterialExpressionTime, -900, 100), ""),
         ("Layer", vector_parameter(material, "Layer", (0.0, 0.52, 1.25, 0.004), 200), "RGBA"),
         ("Look", vector_parameter(material, "Look", (1.0, 1.7, 1.0, 1.55), 300), "RGBA"),
+        # Quality = (march steps: 6 High, 8 Ultra; deck thickness in radians).
+        ("Quality", vector_parameter(material, "Quality", (6.0, 0.0042, 0.0, 0.0), 350), "RGBA"),
     ] + shock_inputs(material, 400)
     shading = custom(material, "earth_clouds.hlsl", inputs, unreal.CustomMaterialOutputType.CMOT_FLOAT4)
     output(mask(material, shading, "rgb"), "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
@@ -554,18 +557,22 @@ def build_moon():
     finish_material(material, MATERIAL_DIR, "M_EarthMoon")
 
 
-def build_ash_advection(black):
-    material = create_material(MATERIAL_DIR, "M_AshAdvection")
+def build_ash_advection(name, mode, black, masks):
+    """Transport step for the ash map (mode 0) or the vapour map (mode 1)."""
+    material = create_material(MATERIAL_DIR, name)
     material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
     inputs = [
         ("UV", node(material, unreal.MaterialExpressionTextureCoordinate, -900, -100), ""),
         ("AshTex", texture_object(material, "AshSource", black, 0), ""),
         ("FireTex", texture_object(material, "FireSource", black, 50), ""),
+        ("VapourTex", texture_object(material, "VapourSource", black, 60), ""),
+        ("MasksTex", texture_object(material, "MasksTexture", masks, 70), ""),
         ("Step", vector_parameter(material, "Step", (0.1, 0.0, 1.0 / 1024.0, 1.0 / 512.0), 100), "RGBA"),
+        ("Mode", constant(material, mode, 200), ""),
     ]
     shading = custom(material, "ash_advection.hlsl", inputs, unreal.CustomMaterialOutputType.CMOT_FLOAT3)
     output(shading, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
-    finish_material(material, MATERIAL_DIR, "M_AshAdvection")
+    finish_material(material, MATERIAL_DIR, name)
 
 
 def build_step(name, shader_file, inputs, vectors=()):
@@ -609,6 +616,25 @@ def build_fx(name, mode, shape, two_sided, instanced=False):
     shading = custom(material, "fx.hlsl", inputs, unreal.CustomMaterialOutputType.CMOT_FLOAT3)
     output(shading, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
     finish_material(material, FX_MATERIAL_DIR, name)
+
+
+def build_fireball():
+    """Translucent black-body fireball with a condensing soot jacket."""
+    material = create_material(FX_MATERIAL_DIR, "M_FXFireball")
+    material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
+    material.set_editor_property("blend_mode", unreal.BlendMode.BLEND_TRANSLUCENT)
+    inputs = [
+        ("NormalWS", node(material, unreal.MaterialExpressionVertexNormalWS, -900, -200), ""),
+        ("CamVec", node(material, unreal.MaterialExpressionCameraVectorWS, -900, -100), ""),
+        ("LocalPos", local_position(material, 500), ""),
+        ("Time", node(material, unreal.MaterialExpressionTime, -900, 600), ""),
+        ("Heat", vector_parameter(material, "Heat", (4000.0, 6.0, 0.0, 0.0), 200), "RGBA"),
+        ("Shape", vector_parameter(material, "Shape", (2.6, 1.0, 0.5, 1.4), 300), "RGBA"),
+    ]
+    shading = custom(material, "fireball.hlsl", inputs, unreal.CustomMaterialOutputType.CMOT_FLOAT4)
+    output(mask(material, shading, "rgb"), "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    output(mask(material, shading, "a"), "", unreal.MaterialProperty.MP_OPACITY)
+    finish_material(material, FX_MATERIAL_DIR, "M_FXFireball")
 
 
 def build_fx_volume(name, instanced=False):
@@ -724,7 +750,8 @@ def main():
     build_sun("M_EarthSun", (0.0, 42.0, 0.0, 0.0), additive=False)
     build_sun("M_SunCorona", (1.0, 1.0, 0.0, 0.0), additive=True)
     build_moon()
-    build_ash_advection(black)
+    build_ash_advection("M_AshAdvection", 0, black, masks)
+    build_ash_advection("M_VapourAdvection", 1, black, masks)
     build_step("M_TsunamiStep", "tsunami_step.hlsl", [("WaveTex", "WaveSource", black), ("MasksTex", "MasksTexture", masks)],
                vectors=[("Flood", (0.90, 4.0, 0.0, 0.0))])
     build_step("M_FireStep", "fire_step.hlsl", [("FireTex", "FireSource", black), ("MasksTex", "MasksTexture", masks), ("DayTex", "DayTexture", day)])
@@ -735,6 +762,8 @@ def main():
     build_fx("M_FXTrail", 1, (1.6, 1.2, 0.0, 0.0), two_sided=True)
     build_fx("M_FXRing", 2, (3.0, 1.6, 0.0, 0.0), two_sided=True)
     build_fx("M_FXSpray", 3, (1.4, 0.6, 0.0, 0.0), two_sided=True)
+    build_fx("M_FXWilson", 4, (2.4, 0.2, 3.0, 0.0), two_sided=True)
+    build_fireball()
     build_projectile_body()
     build_niagara_templates()
     remove_obsolete_assets()
