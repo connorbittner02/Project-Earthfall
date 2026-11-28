@@ -6,7 +6,7 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
             float3 DayTex, float3 NightTex, float3 NormalTex, float3 MasksTex,
             float3 Mask, float2 PomUV, Texture2D AshTex, SamplerState AshTexSampler,
             Texture2D CraterTex, SamplerState CraterTexSampler, float3 Wave, float3 Fire, float3 Plague,
-            float3 Growth, Texture2D NightObj, SamplerState NightObjSampler,
+            float3 Growth, Texture2D GrowthObj, SamplerState GrowthObjSampler, Texture2D NightObj, SamplerState NightObjSampler,
             float CountryId, float4 Inspect, float4 Pom, float3 Sun, float Time, float4 CloudLayer, float4 Tuning, float4 Climate,
             float4 A0, float4 B0, float4 C0, float4 A1, float4 B1, float4 C1,
             float4 A2, float4 B2, float4 C2, float4 A3, float4 B3, float4 C3)
@@ -224,25 +224,52 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
     // Cities follow their people. Growth is settled population over baseline
     // (1 = unchanged, up to 3): a shrinking city dims, a thriving one brightens
     // and its lights spread outward over the surrounding land.
-    float growth = Growth.r < 0.002 ? 1.0 : saturate((Growth.r * 255.0 - 1.0) / 254.0) * 3.0;
     // Tech tier 0..3 in G: each tier burns whiter and bluer, and a little brighter.
     float tech = saturate(Growth.g) * 3.0;
-    float sprawl = saturate((growth - 1.0) / 1.2);
     float3 cityTex = NightTex;
-    [branch] if (sprawl > 0.01)
+    float cityLevel = 1.0;
+    [branch] if (night > 0.001)
     {
-        // Two rings of four taps on the night map, reaching up to seven texels (about 35 km).
-        float2 reach = float2(1.0 / 8192.0, 1.0 / 4096.0) * (1.5 + 5.5 * sprawl);
-        float3 wide = float3(0.0, 0.0, 0.0);
-        for (int tapIndex = 0; tapIndex < 8; tapIndex++)
+        // The growth map is one pixel per 78 km population cell. Read raw it shows
+        // as a grid of squares, so the lookup is bent by two octaves of noise and
+        // averaged over five taps: cell edges dissolve into ragged, blended fronts.
+        float2 cell = float2(1.0 / 512.0, 1.0 / 256.0);
+        float2 bend = (float2(Fbm(n * 38.0, 3), Fbm(n * 38.0 + 17.0, 3)) - 0.44) * 2.6
+                    + (float2(VNoise(n * 150.0), VNoise(n * 150.0 + 9.0)) - 0.5) * 0.9;
+        float2 growthUV = PomUV + bend * cell;
+        float raw = Texture2DSampleLevel(GrowthObj, GrowthObjSampler, growthUV, 0).r * 2.0;
+        raw += Texture2DSampleLevel(GrowthObj, GrowthObjSampler, growthUV + float2(0.85, 0.55) * cell, 0).r;
+        raw += Texture2DSampleLevel(GrowthObj, GrowthObjSampler, growthUV + float2(-0.55, 0.85) * cell, 0).r;
+        raw += Texture2DSampleLevel(GrowthObj, GrowthObjSampler, growthUV + float2(-0.85, -0.55) * cell, 0).r;
+        raw += Texture2DSampleLevel(GrowthObj, GrowthObjSampler, growthUV + float2(0.55, -0.85) * cell, 0).r;
+        raw /= 6.0;
+        float growth = raw < 0.002 ? 1.0 : saturate((raw * 255.0 - 1.0) / 254.0) * 3.0;
+
+        // Sprawl follows what is already lit: roads, coasts and suburbs on the night
+        // map. The taps are rotated and scaled per pixel by noise, so the spread is
+        // uneven and never a ring of copies.
+        float patchy = 0.55 + 0.45 * VNoise(n * 70.0 + 3.0);
+        float sprawl = saturate((growth - 1.0) / 1.2) * patchy;
+        if (sprawl > 0.01)
         {
-            float tapAngle = tapIndex * 0.7853982 + 0.3;
-            float2 offset = float2(cos(tapAngle), sin(tapAngle)) * reach * (tapIndex % 2 == 0 ? 1.0 : 0.55);
-            wide = max(wide, Texture2DSampleLevel(NightObj, NightObjSampler, PomUV + offset, 0).rgb);
+            float2 reach = float2(1.0 / 8192.0, 1.0 / 4096.0) * (1.5 + 5.5 * sprawl) * (0.6 + 0.8 * VNoise(n * 110.0 + 5.0));
+            // A slowly varying rotation: fast variation here draws curls along the edges.
+            float spin = VNoise(n * 60.0) * 6.2831853;
+            float3 wide = float3(0.0, 0.0, 0.0);
+            float3 soft = float3(0.0, 0.0, 0.0);
+            for (int tapIndex = 0; tapIndex < 8; tapIndex++)
+            {
+                float tapAngle = tapIndex * 0.7853982 + spin;
+                float2 offset = float2(cos(tapAngle), sin(tapAngle)) * reach * (tapIndex % 2 == 0 ? 1.0 : 0.55);
+                float3 tap = Texture2DSampleLevel(NightObj, NightObjSampler, PomUV + offset, 0).rgb;
+                wide = max(wide, tap);
+                soft += tap * 0.125;
+            }
+            // Half the strongest neighbour, half the average: edges feather out.
+            cityTex = max(NightTex, lerp(soft, wide, 0.5) * (0.55 + 0.45 * sprawl));
         }
-        cityTex = max(NightTex, wide * (0.50 + 0.45 * sprawl));
+        cityLevel = growth < 1.0 ? pow(growth, 0.8) : 1.0 + 1.1 * (growth - 1.0);
     }
-    float cityLevel = growth < 1.0 ? pow(growth, 0.8) : 1.0 + 1.1 * (growth - 1.0);
     cityColour = lerp(cityColour, float3(0.62, 0.90, 1.00), saturate(tech / 3.0) * 0.85);
     cityLevel *= 1.0 + 0.22 * tech;
     float3 emissive = cityTex * cityLevel * cityDetail * cityColour * 1.30 * night * (1.0 - blackout) * Tuning.y * (1.0 - 0.7 * soot);

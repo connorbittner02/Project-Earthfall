@@ -34,7 +34,7 @@ FSlateFontInfo MakeFont(bool bBold, bool bMono, float Pixels)
 	return FCoreStyle::GetDefaultFontStyle(bMono ? TEXT("Mono") : (bBold ? TEXT("Bold") : TEXT("Regular")), Points);
 }
 
-FString FormatPeople(double Count)
+FString HudFormatPeople(double Count)
 {
 	if (Count >= 1.e9) return FString::Printf(TEXT("%.3f B"), Count / 1.e9);
 	if (Count >= 1.e6) return FString::Printf(TEXT("%.2f M"), Count / 1.e6);
@@ -236,10 +236,10 @@ void AEarthfallHUD::DrawStatusPanel(const FEarthfallTelemetry& Telemetry, const 
 	};
 
 	const bool bAnyDead = Telemetry.TotalCasualties >= 1.0;
-	Row(TEXT("POPULATION"), FormatPeople(Telemetry.LivingPopulation), White);
-	Row(TEXT("CASUALTIES"), FormatPeople(Telemetry.TotalCasualties), bAnyDead ? Red : White);
-	Row(TEXT("DISPLACED"), FormatPeople(Telemetry.DisplacedPopulation), Telemetry.DisplacedPopulation >= 1.0 ? Orange : White);
-	Row(TEXT("FALLOUT DEATHS"), FormatPeople(Telemetry.FalloutCasualties), Telemetry.FalloutCasualties >= 1.0 ? Green : White);
+	Row(TEXT("POPULATION"), HudFormatPeople(Telemetry.LivingPopulation), White);
+	Row(TEXT("CASUALTIES"), HudFormatPeople(Telemetry.TotalCasualties), bAnyDead ? Red : White);
+	Row(TEXT("DISPLACED"), HudFormatPeople(Telemetry.DisplacedPopulation), Telemetry.DisplacedPopulation >= 1.0 ? Orange : White);
+	Row(TEXT("FALLOUT DEATHS"), HudFormatPeople(Telemetry.FalloutCasualties), Telemetry.FalloutCasualties >= 1.0 ? Green : White);
 
 	const float Blackout = Telemetry.GridBlackoutPercent / 100.0f;
 	Row(TEXT("GRID BLACKOUT"), FString::Printf(TEXT("%.1f %%"), Telemetry.GridBlackoutPercent), Blackout > 0.001f ? Orange : White, Blackout);
@@ -567,10 +567,10 @@ void AEarthfallHUD::DrawCountryDossier(const AEarthOrbitPawn* Pawn)
 	};
 
 	const double CasualtyFraction = Stats.InitialPopulation > 0.0 ? Stats.Casualties / Stats.InitialPopulation : 0.0;
-	Row(TEXT("POPULATION"), FormatPeople(Stats.LivingPopulation), White);
-	Row(TEXT("CASUALTIES"), FString::Printf(TEXT("%s  (%.1f%%)"), *FormatPeople(Stats.Casualties), CasualtyFraction * 100.0),
+	Row(TEXT("POPULATION"), HudFormatPeople(Stats.LivingPopulation), White);
+	Row(TEXT("CASUALTIES"), FString::Printf(TEXT("%s  (%.1f%%)"), *HudFormatPeople(Stats.Casualties), CasualtyFraction * 100.0),
 		Stats.Casualties >= 1.0 ? Red : White);
-	Row(TEXT("REFUGEES"), FormatPeople(Stats.Displaced), Stats.Displaced >= 1.0 ? Orange : White);
+	Row(TEXT("REFUGEES"), HudFormatPeople(Stats.Displaced), Stats.Displaced >= 1.0 ? Orange : White);
 	const float Grid = Stats.GridPercent / 100.0f;
 	Row(TEXT("POWER GRID"), FString::Printf(TEXT("%.0f %%"), Stats.GridPercent),
 		FMath::Lerp(Red, Green, FMath::Clamp(Grid, 0.0f, 1.0f)), Grid);
@@ -588,7 +588,7 @@ void AEarthfallHUD::DrawCountryDossier(const AEarthOrbitPawn* Pawn)
 	}
 	if (CountryInfected >= 1.0)
 	{
-		Row(TEXT("INFECTED"), FString::Printf(TEXT("%s  //  CURED %s"), *FormatPeople(CountryInfected), *FormatPeople(Sandbox->GetCured())), FLinearColor(0.62f, 1.0f, 0.22f, 1.0f));
+		Row(TEXT("INFECTED"), FString::Printf(TEXT("%s  //  CURED %s"), *HudFormatPeople(CountryInfected), *HudFormatPeople(Sandbox->GetCured())), FLinearColor(0.62f, 1.0f, 0.22f, 1.0f));
 	}
 	if (bFaction)
 	{

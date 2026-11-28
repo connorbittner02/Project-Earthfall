@@ -23,7 +23,8 @@ namespace EarthfallMarkers
 	constexpr uint8 AirWing = 7;     // air strike wings crossing land
 	constexpr uint8 Shield = 8;      // fusion shield over a tier-4 capital
 	constexpr uint8 Army = 9;        // ground armies and garrisons
-	constexpr uint8 Count = 10;
+	constexpr uint8 Smoke = 10;      // smoke over fighting, seen from low altitude
+	constexpr uint8 Count = 11;
 }
 
 /** One light for AEarthfallSandboxView to draw this frame. World space. */

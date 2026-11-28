@@ -811,8 +811,9 @@ void UEarthfallSandboxSubsystem::BuildMarkers()
 			FEarthfallMarker& Marker = Markers.AddDefaulted_GetRef();
 			Marker.Position = Center + World * Radius * (Unit.bNaval ? 1.004f : (Unit.bArmy ? 1.003f : 1.03f)) + Offset * (Unit.bNaval || Unit.bArmy ? 1.0f : 1.4f);
 			Marker.Forward = Forward;
-			Marker.Size = Unit.bNaval ? 0.30f : (Unit.bArmy ? 0.34f : 0.20f);
-			Marker.Stretch = Unit.bNaval ? 2.6f : (Unit.bArmy ? 1.5f : 5.0f);
+			// Long hulls, squat wedges, broad deltas: see AEarthfallSandboxView for the shapes.
+			Marker.Size = Unit.bNaval ? 0.30f : (Unit.bArmy ? 0.36f : 0.30f);
+			Marker.Stretch = Unit.bNaval ? 3.6f : (Unit.bArmy ? 1.5f : 2.0f);
 			Marker.Kind = Unit.bNaval ? EarthfallMarkers::Unit : (Unit.bArmy ? EarthfallMarkers::Army : EarthfallMarkers::AirWing);
 		}
 	}
@@ -878,20 +879,33 @@ void UEarthfallSandboxSubsystem::BuildMarkers()
 	const bool bLowView = ViewPawn && ViewPawn->GetOrbitDistance() < Radius * 1.02f;
 	for (const FBioZone& Zone : BioZones)
 	{
-		if (Zone.Kind == 0 || bLowView) continue;
+		if (Zone.Kind == 0) continue;
 		FVector TangentA;
 		FVector TangentB;
 		Zone.Direction.FindBestAxisVectors(TangentA, TangentB);
-		for (int32 Spark = 0; Spark < 7; ++Spark)
+		for (int32 Spark = 0; Spark < (bLowView ? 18 : 7); ++Spark)
 		{
 			// Each spark relights somewhere new a few times a second.
-			FRandomStream Random(GetTypeHash(Zone.Direction) + Spark * 131 + FMath::FloorToInt(WorldTime * 3.0f + Spark * 0.37f));
+			// From orbit each spark relights somewhere new a few times a second; close up the fires stay put for seconds.
+			FRandomStream Random(GetTypeHash(Zone.Direction) + Spark * 131 + FMath::FloorToInt(WorldTime * (bLowView ? 0.25f : 3.0f) + Spark * 0.37f));
 			const float Angle = Random.FRandRange(0.0f, 2.0f * PI);
 			const FVector Local = (Zone.Direction + (TangentA * FMath::Cos(Angle) + TangentB * FMath::Sin(Angle)) * Random.FRandRange(0.0f, Zone.Radius * 0.8f)).GetSafeNormal();
 			FEarthfallMarker& Marker = Markers.AddDefaulted_GetRef();
-			Marker.Position = Center + Transform.TransformVectorNoScale(Local) * Radius * 1.004f;
-			Marker.Size = 0.12f;
+			// Over streamed terrain the embers sit just above the ground (the tiles lie
+			// near 0.9988 R on a plateau), each under its own puff of dark smoke.
+			const FVector Up = Transform.TransformVectorNoScale(Local);
+			Marker.Position = Center + Up * Radius * (bLowView ? 0.9991f : 1.004f);
+			Marker.Size = bLowView ? 0.035f : 0.12f;
 			Marker.Kind = EarthfallMarkers::Combat;
+			if (bLowView)
+			{
+				FEarthfallMarker& Puff = Markers.AddDefaulted_GetRef();
+				Puff.Position = Center + Up * Radius * 0.9994f + TangentA * 0.02f;
+				Puff.Forward = Up;
+				Puff.Size = 0.085f * Random.FRandRange(0.8f, 1.3f);
+				Puff.Stretch = 1.5f;
+				Puff.Kind = EarthfallMarkers::Smoke;
+			}
 		}
 	}
 	// Airliners and freighters, wherever their routes are still open.

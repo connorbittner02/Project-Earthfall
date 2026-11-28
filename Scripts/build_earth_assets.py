@@ -285,6 +285,7 @@ def build_surface(day, night, normal, masks, countries, black):
         # A colour sampler, because the default (engine Black) is a colour texture. The
         # runtime map bound over it is single-channel linear data and reads the same in R.
         ("Growth", texture_sample(material, "CityGrowthTexture", black, color, 994, pom), "RGB"),
+        ("GrowthObj", texture_object(material, "CityGrowthObject", black, 995), ""),
         ("NightObj", texture_object(material, "NightTextureObject", night, 997), ""),
         ("CountryId", texture_sample(material, "CountryIDTexture", countries, unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_GRAYSCALE, 1000, pom), "R"),
         ("Inspect", vector_parameter(material, "Inspect", (0.0, 0.0, 0.0, 0.0), 1050), "RGBA"),

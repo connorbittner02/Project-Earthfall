@@ -31,6 +31,8 @@ private:
 	TArray<TObjectPtr<UInstancedStaticMeshComponent>> Batches;
 	UPROPERTY()
 	TObjectPtr<UMaterialInterface> GlowMaterial;
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> SmokeMaterial;
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UMaterialInstanceDynamic>> BatchMIDs;
 

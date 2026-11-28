@@ -461,6 +461,10 @@ void AEarthfallCaptureDirector::BuildScript()
 		Sandbox->UseTool(EarthfallTools::TabCiv, EarthfallTools::OrderAttack, EarthfallSolar::DirectionFromLatLon(-34.6, -58.4), P);
 	});
 	At(250.6f, [this]() { Shot(TEXT("62-order-attack-army-and-fleet")); });
+	// A closer look at the three unit silhouettes, then back out.
+	At(250.7f, [=]() { View(-49.0f, -27.0f, 150.0f); });
+	At(252.0f, [this]() { Shot(TEXT("62b-unit-silhouettes")); });
+	At(252.1f, [=]() { View(-50.0f, -22.0f, 215.0f); });
 	At(254.5f, [this]() { Shot(TEXT("63-order-attack-munitions")); });
 	At(254.6f, [this]()
 	{
@@ -495,7 +499,23 @@ void AEarthfallCaptureDirector::BuildScript()
 				EarthfallMunitions::Name(P->GetMunition()), People->GetTelemetry().LivingPopulation / 1.0e9);
 		}
 	});
-	At(262.0f, [this]() { Finish(); });
+	// Tech tiers at night: Japan uplifted to Fusion Shielded beside Hypersonic China
+	// and Conventional Korea.
+	At(261.6f, [=, this]()
+	{
+		AEarthOrbitPawn* P = Pawn();
+		UEarthfallSandboxSubsystem* Sandbox = GetWorld()->GetSubsystem<UEarthfallSandboxSubsystem>();
+		if (!P || !Sandbox) return;
+		P->ToggleInspectMode();
+		View(128.0f, 35.0f, 225.0f);
+		const FVector Tokyo = EarthfallSolar::DirectionFromLatLon(35.7, 139.7);
+		for (int32 Tier = 0; Tier < 3; ++Tier) Sandbox->UseTool(EarthfallTools::TabCiv, EarthfallTools::TechUplift, Tokyo, P);
+		P->InspectDirection(Tokyo);
+	});
+	At(265.0f, [this]() { Shot(TEXT("67-tech-tiers-at-night")); });
+	At(265.1f, [this]() { if (AEarthOrbitPawn* P = Pawn()) { P->ToggleInspectMode(); P->SetHudMode(EEarthfallHudMode::Hidden); } });
+	At(266.2f, [this]() { Shot(TEXT("68-tech-tiers-at-night-clean")); });
+	At(266.8f, [this]() { Finish(); });
 
 	Steps.StableSort([](const FStep& A, const FStep& B) { return A.Time < B.Time; });
 }

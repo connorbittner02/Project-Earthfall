@@ -1017,7 +1017,12 @@ void AEarthfallPlanet::BindSimulationTextures()
 	if (TsunamiRTs.IsValidIndex(TsunamiReadIndex)) SurfaceMID->SetTextureParameterValue(TEXT("TsunamiRT"), TsunamiRTs[TsunamiReadIndex]);
 	if (FireRTs.IsValidIndex(FireReadIndex)) SurfaceMID->SetTextureParameterValue(TEXT("FireMaskRT"), FireRTs[FireReadIndex]);
 	if (PlagueRT) SurfaceMID->SetTextureParameterValue(TEXT("PlagueRT"), PlagueRT);
-	if (CityGrowthTexture) SurfaceMID->SetTextureParameterValue(TEXT("CityGrowthTexture"), CityGrowthTexture);
+	if (CityGrowthTexture)
+	{
+		// Bound twice: once as a plain sample for the tech tier, once as an object the shader can tap several times.
+		SurfaceMID->SetTextureParameterValue(TEXT("CityGrowthTexture"), CityGrowthTexture);
+		SurfaceMID->SetTextureParameterValue(TEXT("CityGrowthObject"), CityGrowthTexture);
+	}
 }
 
 void AEarthfallPlanet::StampInto(UTextureRenderTarget2D* Target, UTexture2D* Texture, const FVector& LocalDirection, float AngularRadius, const FLinearColor& Tint)
