@@ -248,7 +248,9 @@ void AEarthfallPlanet::SetCameraDistance(float Distance, float AimRadius)
 	{
 		// Quality = (march steps, deck thickness in radians), as in earth_clouds.hlsl.
 		bCloudQualityDirty = false;
-		LowCloudMID->SetVectorParameterValue(TEXT("Quality"), FLinearColor(bCloudUltra ? 8.0f : 6.0f, 0.0042f, 0.0f, 0.0f));
+		int32 StepOverride = 0;
+		FParse::Value(FCommandLine::Get(), TEXT("EarthfallCloudSteps="), StepOverride);
+		LowCloudMID->SetVectorParameterValue(TEXT("Quality"), FLinearColor(StepOverride > 0 ? static_cast<float>(StepOverride) : (bCloudUltra ? 8.0f : 6.0f), 0.0042f, 0.0f, 0.0f));
 		if (HighCloudMID) HighCloudMID->SetVectorParameterValue(TEXT("Quality"), FLinearColor(2.0f, 0.0020f, 0.0f, 0.0f));
 		UE_LOG(LogTemp, Display, TEXT("EARTHFALL_CLOUDS quality=%s steps=%d"), bCloudUltra ? TEXT("ULTRA") : TEXT("HIGH"), bCloudUltra ? 8 : 6);
 	}

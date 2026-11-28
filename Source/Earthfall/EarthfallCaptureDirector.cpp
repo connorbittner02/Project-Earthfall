@@ -50,7 +50,9 @@ void AEarthfallCaptureDirector::Shot(const TCHAR* Name)
 	const FString Path = OutputDirectory / FString::Printf(TEXT("%s.png"), Name);
 	FScreenshotRequest::RequestScreenshot(Path, false, false);
 	++ShotCount;
-	UE_LOG(LogEarthfallCapture, Display, TEXT("EARTHFALL_CAPTURE shot %s at t=%.2f"), Name, ScriptSeconds);
+	// Frame count and wall clock at every shot, so the frame rate of any stretch of the
+	// script can be worked out afterwards without the slow-motion burst skewing it.
+	UE_LOG(LogEarthfallCapture, Display, TEXT("EARTHFALL_CAPTURE shot %s at t=%.2f frame=%d wall=%.3f"), Name, ScriptSeconds, FrameCount, FPlatformTime::Seconds());
 }
 
 void AEarthfallCaptureDirector::BuildScript()

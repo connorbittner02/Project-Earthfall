@@ -127,11 +127,34 @@ through the first second of a detonation at one tenth speed) and seven grid shot
 to `87`). Four consecutive full runs finished with no shader compile errors, the audio
 self-test passing, and the simulation reset clean.
 
-**Frame rate: the 60 fps target is not confirmed.** The full runs averaged 44.4, 47.2,
-47.8 and 45.7 fps while another application (a Roblox client) was holding 30 to 40% of
-the GPU. Before it started, the city set alone ran at 79.5 to 83.4 fps on a free GPU.
-The branch this builds on measured 69 fps for its 71 shots on a free GPU. A full run on
-a free GPU is still needed to say whether the volumetric clouds cost the target.
+**Frame rate: 60 fps is met on average, not in every section.** With another
+application holding 30 to 40% of the GPU, four full runs averaged 44.4 to 47.8 fps. With
+the GPU free, four more full runs logged 60.4, 58.9, 84.3 and 70.7 fps. That logged
+average is slightly flattering, because the slow-motion burst counts ten real seconds as
+one, so the capture now logs a frame count and wall-clock time at every shot. By that
+measure the last two runs were 80.5 and 66.8 fps over the whole script.
+
+Per section, wall clock, for those two runs:
+
+| Section | Run 3 | Run 4 |
+| --- | --- | --- |
+| Low orbit and streamed terrain (`22` to `27`) | 66.1 | 75.5 |
+| Original orbital strikes with HUD (`01` to `21`) | 49.2 | 57.1 |
+| Terrain destruction (`28` to `34`) | 47.2 | 71.5 |
+| Sandbox and diplomacy (`35` to `52`) | 49.3 | 59.4 |
+| Munitions and civilization (`55` to `68`) | 46.6 | 52.6 |
+| Cities at 30,000 ft (`69` to `74`) | 98.6 | 82.9 |
+| Clouds (`75` to `77b`) | 126.5 | 55.9 |
+| Detonation and plumes (`78d` to `80`) | 129.3 | 63.3 |
+| Night lights and grid (`81` to `87`) | 130.5 | 61.6 |
+
+The two runs disagree by a factor of two on some sections with nothing changed between
+them, so something outside the game was still taking GPU time intermittently; the cause
+was not found. What the table does show: the new city, effects and grid work can run
+well above 60, and the older HUD-on sections are the ones that sit in the 50s. The
+branch this builds on logged 69 fps for those sections. A test with the cloud march
+forced to one step instead of six changed the frame rate by about 6%, so the march is
+not what costs them.
 
 Seen in frames:
 

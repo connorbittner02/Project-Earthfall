@@ -39,24 +39,41 @@ float4 Main(float3 LocalPos, float3 ViewLocal, float CamDist, float2 UV, float3 
     float sinLat;
     float sinLatUnused;
     float3 p0 = CloudDomain(ns, Time, Layer, sinLat);
-    float3 pE = (CloudDomain(normalize(ns + east * 0.012), Time, Layer, sinLatUnused) - p0) / 0.012;
-    float3 pN = (CloudDomain(normalize(ns + north * 0.012), Time, Layer, sinLatUnused) - p0) / 0.012;
+    // Most of the sky is clear. A two-octave probe with the threshold lowered by
+    // more than everything the march could add back (the third octave, the fine
+    // structure, and the sideways slide of the ray) says whether any cloud can be
+    // reached from this pixel; where none can, the march and its setup are skipped.
+    float4 probeLayer = Layer;
+    probeLayer.y -= 0.30;
+    bool anyCloud = CloudDensity(p0, sinLat, probeLayer, 2) > 0.0 || ring > 0.01;
+    float3 pE = float3(0.0, 0.0, 0.0);
+    float3 pN = float3(0.0, 0.0, 0.0);
+    [branch] if (anyCloud)
+    {
+        pE = (CloudDomain(normalize(ns + east * 0.012), Time, Layer, sinLatUnused) - p0) / 0.012;
+        pN = (CloudDomain(normalize(ns + north * 0.012), Time, Layer, sinLatUnused) - p0) / 0.012;
+    }
 
     // High-frequency wispy erosion: thin cloud is eaten away first, so decks
     // fray into filaments instead of ending on a solid white edge. Value noise
     // shows its lattice as straight creases up close, so the detail lookups are
     // bent through a slow vector warp first. One erosion value serves every step.
-    float3 warp = float3(VNoise(ns * 17.0), VNoise(ns * 17.0 + 31.0), VNoise(ns * 17.0 + 57.0)) - 0.5;
-    float3 wp = ns * 46.0 + warp * 1.6 + float3(Time * 0.012, 0.0, Time * 0.007);
-    float wisps = Fbm(wp, 3) * 0.7 + Fbm(wp * 3.1 + 5.0, 2) * 0.3;
-    float erode = smoothstep(0.30, 0.62, wisps) * 0.42;
-    float nearDetail = 1.0 - smoothstep(4.0, 40.0, CamDist);
-    [branch] if (nearDetail > 0.001)
+    float erode = 0.0;
+    float fineStructure = 0.0;
+    [branch] if (anyCloud)
     {
-        float fine = Fbm(ns * 420.0 + warp * 9.0 + (wisps - 0.5) * 3.0 + float3(Time * 0.02, 0.0, 0.0), 3);
-        erode += smoothstep(0.35, 0.75, fine) * 0.45 * nearDetail;
+        float3 warp = float3(VNoise(ns * 17.0), VNoise(ns * 17.0 + 31.0), VNoise(ns * 17.0 + 57.0)) - 0.5;
+        float3 wp = ns * 46.0 + warp * 1.6 + float3(Time * 0.012, 0.0, Time * 0.007);
+        float wisps = Fbm(wp, 3) * 0.7 + Fbm(wp * 3.1 + 5.0, 2) * 0.3;
+        erode = smoothstep(0.30, 0.62, wisps) * 0.42;
+        float nearDetail = 1.0 - smoothstep(4.0, 40.0, CamDist);
+        [branch] if (nearDetail > 0.001)
+        {
+            float fine = Fbm(ns * 420.0 + warp * 9.0 + (wisps - 0.5) * 3.0 + float3(Time * 0.02, 0.0, 0.0), 3);
+            erode += smoothstep(0.35, 0.75, fine) * 0.45 * nearDetail;
+        }
+        fineStructure = (Fbm(p0 * 5.3 + 3.1, 3) - 0.44) * 0.11;
     }
-    float fineStructure = (Fbm(p0 * 5.3 + 3.1, 3) - 0.44) * 0.11;
 
     float NdL = dot(n, Sun);
     float3 sunTangent = Sun - n * NdL;
@@ -73,7 +90,8 @@ float4 Main(float3 LocalPos, float3 ViewLocal, float CamDist, float2 UV, float3 
     float thickness = Quality.y;
     // The thin high deck (Look.y < 1) cannot shadow itself visibly: two steps do.
     int steps = Look.y >= 1.0 ? (int)Quality.x : 2;
-    float stepDepth = 1.0 / steps;
+    if (!anyCloud) steps = 0;
+    float stepDepth = 1.0 / max(steps, 1);
     // Towards the sun: the forward lobe is the silver lining, the back lobe keeps
     // the day side from going flat.
     float cosSun = dot(-V, Sun);
