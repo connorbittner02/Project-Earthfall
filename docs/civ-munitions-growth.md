@@ -88,13 +88,15 @@ Verified by a native 3840x2160 capture: 71 shots, 68.9 fps average.
 
 - **Sprawl grid (`59`, `60`).** The growth texture is now sampled through a noise-bent UV
   and a five-tap average, the sprawl is broken by a patch noise, and the eight night-map
-  taps are rotated and stretched per place. The 78 km dot grid is gone; the sprawl is
-  slightly streaky instead.
+  taps are rotated and stretched per place. The 78 km dot grid is gone. A first version
+  with eight fixed taps drew streaks; the sprawl is now a jittered twelve-tap disc blur,
+  which reads as soft rounded glows. A fully grown Japan still blows out to near-white.
 - **Unit silhouettes (`62b`).** Armies and air wings are cones (arrowheads) laid along
   their heading, fleets are long cyan hulls. Tints: armies amber, fleets cyan-blue, air
-  wings white-gold. In `62b` the fleet hulls and the arrowheads are clearly different
-  shapes; the army wedges sit under Brazil's shield dome there and read pale gold, not
-  a strong amber.
+  wings white-gold. The markers are additive, so the army tint is a deeper, dimmer
+  orange than amber; over daylit ground that lands on amber, where a true amber washed
+  out to pale gold. `62b` shows amber army wedges beside white air wings; no fleet
+  happens to be in that frame (fleet hulls are in `62`).
 - **Rage fires (`53`, `54`).** The rage mask is fractional over most of an outbreak, which
   had left the fires as a pale peach wash. Fires and smoke now switch fully on above a
   low threshold: glowing orange clusters several kilometres across with dark smoke

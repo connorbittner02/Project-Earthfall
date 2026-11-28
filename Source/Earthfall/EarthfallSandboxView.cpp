@@ -26,7 +26,7 @@ const FLinearColor MarkerTints[] = {
 	FLinearColor(1.00f, 0.34f, 0.06f, 2.4f),  // combat and unrest: ember orange
 	FLinearColor(1.00f, 0.90f, 0.50f, 2.6f),  // air strike wings: white-gold deltas
 	FLinearColor(0.30f, 0.90f, 1.00f, 0.42f), // fusion shield: a faint cyan dome
-	FLinearColor(1.00f, 0.42f, 0.03f, 2.0f),  // ground armies: amber wedges
+	FLinearColor(1.00f, 0.22f, 0.00f, 1.7f),  // ground armies: amber wedges (additive: deeper and dimmer than amber, or daylit ground washes it to pale gold)
 	FLinearColor(0.050f, 0.045f, 0.040f, 0.80f), // smoke over fighting (translucent volume, not a glow)
 };
 constexpr int32 MarkerKindCount = UE_ARRAY_COUNT(MarkerTints);

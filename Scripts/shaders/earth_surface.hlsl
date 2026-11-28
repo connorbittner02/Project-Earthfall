@@ -257,16 +257,22 @@ float3 Main(float3 LocalPos, float3 NormalLocal, float3 ViewLocal, float CamDist
             float spin = VNoise(n * 60.0) * 6.2831853;
             float3 wide = float3(0.0, 0.0, 0.0);
             float3 soft = float3(0.0, 0.0, 0.0);
-            for (int tapIndex = 0; tapIndex < 8; tapIndex++)
+            // Twelve taps filling a disc on a golden-angle spiral, turned a little more
+            // per pixel. Eight taps on two rings copied every bright pixel to eight
+            // fixed places, which drew streaks and curls; a filled, jittered disc
+            // is a blur instead.
+            spin += Hash13(n * 41000.0) * 2.39996;
+            for (int tapIndex = 0; tapIndex < 12; tapIndex++)
             {
-                float tapAngle = tapIndex * 0.7853982 + spin;
-                float2 offset = float2(cos(tapAngle), sin(tapAngle)) * reach * (tapIndex % 2 == 0 ? 1.0 : 0.55);
+                float tapAngle = tapIndex * 2.39996 + spin;
+                float2 offset = float2(cos(tapAngle), sin(tapAngle)) * reach * sqrt((tapIndex + 0.5) / 12.0);
                 float3 tap = Texture2DSampleLevel(NightObj, NightObjSampler, PomUV + offset, 0).rgb;
                 wide = max(wide, tap);
-                soft += tap * 0.125;
+                soft += tap / 12.0;
             }
-            // Half the strongest neighbour, half the average: edges feather out.
-            cityTex = max(NightTex, lerp(soft, wide, 0.5) * (0.55 + 0.45 * sprawl));
+            // Mostly the average, lifted to hold its brightness, with a little of the
+            // strongest neighbour so thin roads still carry outward.
+            cityTex = max(NightTex, lerp(soft * 1.7, wide, 0.2) * (0.55 + 0.45 * sprawl));
         }
         cityLevel = growth < 1.0 ? pow(growth, 0.8) : 1.0 + 1.1 * (growth - 1.0);
     }
